@@ -256,15 +256,43 @@ stampare un segreto in chiaro — si usa `--recipient <chiave age>`.
 
 ## Il client (a-Shell)
 
+### Installazione sul telefono
+
+In a-Shell, tre comandi:
+
 ```bash
-mkdir -p ~/Documents/.arena && mv config.json ~/Documents/.arena/config.json
+cd ~/Documents
+curl -O https://raw.githubusercontent.com/<owner>/<arena>/main/client/arena.py
+python3 arena.py init
+```
+
+`init` chiede un valore per volta (user_id, secret, repo, token), scrive
+`~/Documents/.arena/config.json` con permessi `600` e **verifica subito che
+l'arena risponda**. Scrivere a mano un JSON con dentro 64 caratteri
+esadecimali, su una tastiera da telefono, e' il modo migliore per sbagliare un
+carattere e non capire perche' ogni bet prende `ERR_SIG`.
+
+Per aggiornare il client basta rilanciare il `curl`: e' un file solo, senza
+dipendenze fuori dalla stdlib.
+
+### Token
+
+Serve **solo per scommettere** (aprire una issue); leggere eventi e saldi
+funziona senza. Su GitHub: *Settings → Developer settings → Personal access
+tokens → Fine-grained tokens*, con **Only select repositories** → l'arena, e
+come permesso **Issues: Read and write**. Niente altro: quel token non deve
+poter scrivere codice.
+
+### Uso quotidiano
+
+```bash
 python3 arena.py events                 # eventi aperti, pool e quote implicite
 python3 arena.py balance                # il tuo saldo
 python3 arena.py bet ev_derby yes 500   # firma, invia, aspetta la ricevuta
 python3 arena.py receipt u_ab12ef34-7   # ricontrolla dopo
 ```
 
-`config.json` (consegnato dall'owner, §5.3):
+`config.json` (§5.3) — se preferisci scriverlo a mano:
 
 ```json
 {"user_id":"u_ab12ef34","secret":"hex64","repo":"owner/arena",

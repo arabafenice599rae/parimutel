@@ -31,7 +31,10 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+import re
+
 ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+USER_ID_RE = re.compile(r"^u_[0-9a-f]{8}$")
 SIG_PREFIX = "v1"
 API = "https://api.github.com"
 RAW = "https://raw.githubusercontent.com"
@@ -333,6 +336,73 @@ def cmd_bet(cfg, args):
     return show_receipt(bet["bet_id"], poll_receipt(cfg, bet["bet_id"], args.timeout))
 
 
+def cmd_init(cfg, args):
+    """Scrive il config e verifica subito che funzioni.
+
+    Su a-Shell scrivere a mano un JSON con 64 caratteri esadecimali dentro e'
+    un ottimo modo per sbagliare un carattere e non capire perche'; qui si
+    incolla un valore per volta e alla fine si vede se l'arena risponde.
+    """
+    path = config_path()
+    if path.exists() and not args.force:
+        raise SystemExit(f"{path} esiste gia' (usa --force per sovrascriverlo)")
+
+    def chiedi(etichetta, default=None, obbligatorio=True):
+        suffisso = f" [{default}]" if default else ""
+        while True:
+            valore = (input(f"{etichetta}{suffisso}: ").strip() or (default or ""))
+            if valore or not obbligatorio:
+                return valore
+            print("  serve un valore")
+
+    user_id = args.user_id or chiedi("user_id (es. u_ab12ef34)")
+    secret = args.secret or chiedi("secret (64 caratteri esadecimali)")
+    repo = args.repo or chiedi("repo (owner/nome)")
+    branch = args.branch or chiedi("branch", "main")
+    token = args.token if args.token is not None else chiedi(
+        "token GitHub (serve solo per scommettere, invio per saltare)",
+        obbligatorio=False)
+
+    # Meglio accorgersene adesso che al primo ERR_SIG.
+    if not USER_ID_RE.match(user_id):
+        print(f"  attenzione: '{user_id}' non ha la forma u_ + 8 esadecimali")
+    if len(secret) != 64 or any(ch not in "0123456789abcdef" for ch in secret.lower()):
+        raise SystemExit("il secret deve essere esattamente 64 caratteri esadecimali")
+    if "/" not in repo:
+        raise SystemExit("il repo va scritto come owner/nome")
+
+    cfg = {"user_id": user_id, "secret": secret.lower(), "repo": repo,
+           "branch": branch, "read": args.read, "channel": args.channel}
+    if token:
+        cfg["token"] = token
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    print(f"\nscritto {path}")
+
+    print("verifico contro l'arena...")
+    try:
+        doc = read_state(cfg, "balances.json") or {"balances": {}}
+    except SystemExit as exc:
+        print(f"  lettura fallita: {exc}")
+        print("  il config e' salvato: controlla repo/branch e riprova con `balance`")
+        return 1
+    riga = doc.get("balances", {}).get(user_id)
+    if riga is None:
+        print(f"  l'arena risponde, ma {user_id} non ha ancora un saldo:")
+        print("  chiedi all'owner un accredito, poi `python3 arena.py balance`")
+    else:
+        print(f"  ok: available={riga['available']} at_risk={riga['at_risk']}")
+    if not token:
+        print("\nSenza token puoi leggere ma non scommettere.")
+        print("Quando ne hai uno: `python3 arena.py init --force`")
+    return 0
+
+
 def cmd_receipt(cfg, args):
     return show_receipt(args.bet_id, poll_receipt(cfg, args.bet_id, args.timeout))
 
@@ -369,6 +439,17 @@ def main(argv=None) -> int:
     p.add_argument("--timeout", type=int, default=0)
     p.set_defaults(func=cmd_receipt)
 
+    p = sub.add_parser("init", help="crea il config.json (prima installazione)")
+    p.add_argument("--user-id")
+    p.add_argument("--secret")
+    p.add_argument("--repo")
+    p.add_argument("--branch", default="main")
+    p.add_argument("--token", default=None)
+    p.add_argument("--read", choices=["raw", "api"], default="raw")
+    p.add_argument("--channel", choices=["issue", "dispatch"], default="issue")
+    p.add_argument("--force", action="store_true", help="sovrascrivi il config")
+    p.set_defaults(func=cmd_init, senza_config=True)
+
     p = sub.add_parser("sign", help="firma senza inviare (stampa il payload)")
     p.add_argument("event")
     p.add_argument("side", choices=["yes", "no"])
@@ -377,6 +458,8 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_sign)
 
     args = ap.parse_args(argv)
+    if getattr(args, "senza_config", False):
+        return args.func(None, args)
     return args.func(load_config(), args)
 
 
