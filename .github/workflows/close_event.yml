@@ -1,0 +1,28 @@
+name: close_event
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_id:
+        description: "id dell'evento da chiudere subito (es. ev_derby)"
+        required: true
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    env:
+      IN_EVENT: ${{ github.event.inputs.event_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Chiudi la finestra
+        run: |
+          set -euo pipefail
+          trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+          python3 scripts/close_event.py --event "$(trim "$IN_EVENT")" --commit

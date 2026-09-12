@@ -22,7 +22,8 @@ custodisce denaro reale: i saldi sono punti interni.
 | `receipts.json` | esito per `bet_id` — **e' qui che il client fa polling** |
 | `secrets.age` | segreti utente cifrati (opzionale, §5.2 della spec) |
 | `scripts/` | tutta la logica; gira solo dentro le Actions |
-| `client/arena.py` | client a-Shell (solo stdlib) |
+| `client/arena.py` | client a-Shell degli utenti (solo stdlib) |
+| `client/arena_admin.py` | console amministrativa a-Shell (owner) |
 | `tests/`, `scripts/test_smoke.sh` | suite di conformita' I1–I10 e smoke end-to-end |
 | `scripts/stress_test.py` | stress test di concorrenza (scrittori simultanei, crash) |
 
@@ -36,6 +37,7 @@ custodisce denaro reale: i saldi sono punti interni.
 | `settle.py` | liquidazione parimutuel di un evento |
 | `credit.py` | accredito / rettifica (owner) |
 | `create_event.py` | apre un evento |
+| `close_event.py` | chiude in anticipo la finestra di puntata |
 | `register.py` | provisioning utente (id + segreto + config) |
 | `rebuild_balances.py` | ricostruzione e verifica dal solo ledger (recovery/dispute) |
 | `stress_test.py` | molti scrittori concorrenti contro lo stesso repo |
@@ -290,7 +292,7 @@ tokens → Fine-grained tokens*, con **Only select repositories** → l'arena, e
 come permesso **Issues: Read and write**. Niente altro: quel token non deve
 poter scrivere codice.
 
-### Uso quotidiano
+### Uso quotidiano (utente)
 
 ```bash
 python3 arena.py events                 # eventi aperti, pool e quote implicite
@@ -352,6 +354,67 @@ Sono **dinamiche**: ogni puntata successiva le cambia. Quella che vedi al
 momento dell'invio e' una stima, non una quota bloccata.
 
 ---
+
+## La console amministrativa
+
+`arena_admin.py` e' il pannello di controllo dell'owner: un secondo programma,
+separato da quello degli utenti, che gira anch'esso in a-Shell.
+
+```bash
+cd ~/Documents
+curl -O https://raw.githubusercontent.com/<owner>/<arena>/main/client/arena_admin.py
+python3 arena_admin.py setup     # config + scarica i moduli del progetto
+python3 arena_admin.py           # menu
+```
+
+```
+╔══════════════════════════════════════╗
+║            ARENA ADMIN               ║
+╠══════════════════════════════════════╣
+║  1 Dashboard        5 Contabilita'   ║
+║  2 Eventi           6 Ledger         ║
+║  3 Utenti           7 Settlement     ║
+║  4 Scheda utente    8 Integrita'     ║
+╠══════════════════════════════════════╣
+║  9 Crea evento     11 Chiudi evento  ║
+║ 10 Accredita       12 Risolvi evento ║
+╚══════════════════════════════════════╝
+```
+
+Ogni voce e' anche un comando diretto: `arena_admin.py conti`,
+`arena_admin.py utente u_ab12ef34`, `arena_admin.py verifica`,
+`arena_admin.py anteprima ev_derby yes`.
+
+### La console non fa i conti
+
+Scarica lo stato e poi chiama **i moduli del progetto** — `common.py`,
+`settle.py`, `verify_state.py` — cioe' gli stessi che girano dentro le Action:
+
+```
+                     common.py  (il motore contabile)
+                         │
+        ┌────────────────┼────────────────┐
+        ▼                ▼                ▼
+   arena.py        arena_admin.py    GitHub Action
+   (utenti)        (owner)           (scrittore unico)
+        └────────────────┼────────────────┘
+                         ▼
+                      ledger
+```
+
+Una seconda implementazione della matematica dei payout, su un telefono,
+sarebbe il modo piu' rapido per ritrovarsi due verita' diverse. Per questo
+`anteprima` chiama `settle.compute_settlement`: mostra chi incasserebbe cosa
+**con lo stesso codice** che poi liquidera' davvero.
+
+### Le scritture restano delle Action
+
+Creare un evento, accreditare, chiudere e liquidare non avvengono nella
+console: partono come `workflow_dispatch`. L'unico scrittore resta il token
+delle Action (I9); la console valida, mostra l'anteprima, chiede conferma e poi
+delega. Serve un token con **Actions: Read and write** — piu' potente di quello
+degli utenti, e per questo sta in un file separato (`admin.json`), che agli
+utenti non va mai dato.
 
 ## Come funziona una scommessa
 

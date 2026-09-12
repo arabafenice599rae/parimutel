@@ -377,6 +377,44 @@ def sembra_un_token(valore: str) -> bool:
     return len(valore) >= 36 and all(ch.isalnum() or ch in "_-" for ch in valore)
 
 
+def cmd_status(cfg, args):
+    """Vista di apertura: chi sei, quanto hai, cosa c'e' da giocare.
+
+    E' il comando che parte quando si scrive `arena.py` e basta — sul telefono
+    e' la cosa piu' naturale da digitare, e rispondere con un errore di
+    sintassi e' solo scortese.
+    """
+    riga = my_row(cfg)
+    print(f"{cfg['user_id']}   available: {riga['available']}   "
+          f"at_risk: {riga['at_risk']}")
+
+    doc = read_state(cfg, "events.json") or {"events": {}}
+    aperti = [e for e in doc["events"].values() if e["state"] == "OPEN"]
+    if not aperti:
+        print("\nNessun evento aperto.")
+    else:
+        quanti = len(aperti)
+        print(f"\n{quanti} evento aperto:" if quanti == 1
+              else f"\n{quanti} eventi aperti:")
+        for ev in sorted(aperti, key=lambda e: e["close_at"]):
+            pool = ev.get("pool", {})
+            quote = "  ".join(
+                f"{lato}={fmt_mult(multiplier(pool, lato, ev['takeout_bps']))}"
+                for lato in ("yes", "no")
+            )
+            print(f"  {ev['id']:<16} {ev['title'][:28]:<28} chiude {ev['close_at']}")
+            print(f"    {quote}   pool={pool.get('yes', 0)}/{pool.get('no', 0)}")
+
+    if riga["available"] == 0:
+        print("\nSaldo a zero: chiedi un accredito all'owner.")
+    if not cfg.get("token"):
+        print("Nessun token: puoi leggere ma non scommettere "
+              "(`arena.py init --force` per aggiungerlo).")
+    print("\nComandi: events · balance · bet <evento> <yes|no> <punti> · "
+          "receipt <bet_id>")
+    return 0
+
+
 def cmd_init(cfg, args):
     """Scrive il config e verifica subito che funzioni.
 
@@ -392,6 +430,8 @@ def cmd_init(cfg, args):
         suffisso = f" [{default}]" if default else ""
         while True:
             valore = (input(f"{etichetta}{suffisso}: ").strip() or (default or ""))
+            print()   # a-Shell non va a capo dopo l'input: senza, i prompt si
+                      # incollano l'uno all'altro e diventano illeggibili
             if valore or not obbligatorio:
                 return valore
             print("  serve un valore")
@@ -472,7 +512,8 @@ def cmd_sign(cfg, args):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Client Arena Parimutuel")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd")
+    ap.set_defaults(func=cmd_status)
 
     p = sub.add_parser("events", help="elenca gli eventi e le quote")
     p.add_argument("--all", action="store_true", help="mostra anche i SETTLED")
