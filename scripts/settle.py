@@ -133,7 +133,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     ws = c.WorkingState()
-    event_id = args.event
+    event_id = c.clean_id(args.event)
 
     # --- precondizioni -----------------------------------------------------
     if event_id in ws.settlements:

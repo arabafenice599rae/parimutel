@@ -11,12 +11,12 @@ on:
         required: false
         default: ""
       print_config:
-        description: "stampa il config in chiaro (SOLO con repo privato)"
+        description: "Stampa il config in CHIARO nel log: solo se il repo e' privato"
         required: false
         type: boolean
         default: false
       note:
-        description: "nota operativa (non pubblicata nel config)"
+        description: "Nota operativa, non finisce nel config dell'utente"
         required: false
         default: ""
 
@@ -34,6 +34,7 @@ jobs:
       USER_SECRETS: ${{ secrets.USER_SECRETS }}
       AGE_KEY: ${{ secrets.AGE_KEY }}
       RECIPIENT: ${{ github.event.inputs.recipient }}
+      PRINT_CONFIG: ${{ github.event.inputs.print_config }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,11 +43,27 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y age
 
       - name: Registra l'utente
+        env:
+          IN_NOTE: ${{ github.event.inputs.note }}
+        # Come in settle.yml: gli argomenti si costruiscono in bash, perche' un
+        # input booleano puo' arrivare come stringa o come booleano JSON. Qui il
+        # verso pericoloso dell'errore e' stampare un segreto in un log
+        # pubblico, quindi --print-config richiede un "true" esatto.
         run: |
-          python3 scripts/register.py \
-            --repo "${{ github.repository }}" \
-            --branch "${{ github.ref_name }}" \
-            --note "${{ github.event.inputs.note }}" \
-            ${{ github.event.inputs.recipient != '' && format('--recipient "{0}"', github.event.inputs.recipient) || '' }} \
-            ${{ github.event.inputs.print_config == 'true' && '--print-config' || '' }} \
-            --commit
+          set -euo pipefail
+          trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+
+          args=(--repo "${{ github.repository }}" --branch "${{ github.ref_name }}")
+          if [ -n "$IN_NOTE" ]; then
+            args+=(--note "$IN_NOTE")
+          fi
+          recipient="$(trim "$RECIPIENT")"
+          if [ -n "$recipient" ]; then
+            args+=(--recipient "$recipient")
+          fi
+          if [ "$PRINT_CONFIG" = "true" ]; then
+            args+=(--print-config)
+          fi
+          args+=(--commit)
+
+          python3 scripts/register.py "${args[@]}"

@@ -42,6 +42,13 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     ws = c.WorkingState()
+    args.event_id = c.clean_id(args.event_id)
+    args.close_at = c.clean_id(args.close_at)
+    if args.open_at:
+        args.open_at = c.clean_id(args.open_at)
+    if not args.event_id:
+        c.eprint("errore: --id vuoto")
+        return c.EXIT_USAGE
     if args.event_id in ws.events and not args.replace:
         c.eprint(f"errore: evento {args.event_id} esiste gia' (usa --replace)")
         return 1

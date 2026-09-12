@@ -963,5 +963,19 @@ def reset_to_remote(cwd: Path = None, branch: str = None) -> str:
     return git("rev-parse", "HEAD", cwd=cwd).stdout.strip()
 
 
+def clean_id(value: str) -> str:
+    """Normalizza un identificatore digitato da un umano.
+
+    Serve agli argomenti degli script dell'owner (`--event`, `--user`, `--id`):
+    da telefono la tastiera aggiunge spazi con facilita' e un `ev_prova ` che
+    non trova l'evento e' solo frustrazione.
+
+    NON si usa sul payload di una bet: li' la stringa esatta e' quella che
+    l'HMAC copre, e normalizzarla dopo la verifica significherebbe applicare
+    una bet diversa da quella firmata.
+    """
+    return (value or "").strip()
+
+
 def eprint(*args):
     print(*args, file=sys.stderr)

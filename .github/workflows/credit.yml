@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       user_id:
-        description: "user_id destinatario"
+        description: "user_id destinatario (es. u_ab12ef34)"
         required: true
       amount:
-        description: "intero (negativo = rettifica)"
+        description: "Punti da accreditare; negativo = rettifica (es. 10000)"
         required: true
       reason:
-        description: "nota operativa"
+        description: "Nota operativa, finisce nel ledger"
         required: false
         default: ""
       credit_id:
-        description: "id idempotente (default: generato)"
+        description: "id idempotente; lascia vuoto per generarlo"
         required: false
         default: ""
 
@@ -28,17 +28,31 @@ permissions:
 jobs:
   credit:
     runs-on: ubuntu-latest
+    env:
+      IN_USER: ${{ github.event.inputs.user_id }}
+      IN_AMOUNT: ${{ github.event.inputs.amount }}
+      IN_REASON: ${{ github.event.inputs.reason }}
+      IN_CREDIT_ID: ${{ github.event.inputs.credit_id }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Accredita
         run: |
-          python3 scripts/credit.py \
-            --user "${{ github.event.inputs.user_id }}" \
-            --amount "${{ github.event.inputs.amount }}" \
-            --reason "${{ github.event.inputs.reason }}" \
-            ${{ github.event.inputs.credit_id != '' && format('--id "{0}"', github.event.inputs.credit_id) || '' }} \
-            --commit
+          set -euo pipefail
+          trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+
+          args=(--user "$(trim "$IN_USER")" --amount "$(trim "$IN_AMOUNT")")
+          if [ -n "$IN_REASON" ]; then
+            args+=(--reason "$IN_REASON")
+          fi
+          credit_id="$(trim "$IN_CREDIT_ID")"
+          if [ -n "$credit_id" ]; then
+            args+=(--id "$credit_id")
+          fi
+          args+=(--commit)
+
+          echo "credit.py ${args[*]}"
+          python3 scripts/credit.py "${args[@]}"
 
       - name: Verifica le invarianti
         run: python3 scripts/rebuild_balances.py
