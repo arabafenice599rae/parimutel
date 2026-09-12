@@ -43,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import common as c
+import verify_state
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -397,177 +398,67 @@ def spawn(role: str, base: Path, arena: dict, idx: int, extra: dict, rounds: int
 # ==========================================================================
 
 def verify(base: Path, arena: dict, plan: dict, settled_events) -> list:
-    """Ricontrolla TUTTO dallo stato pubblicato. Ritorna la lista di violazioni."""
+    """Ricontrolla TUTTO dallo stato pubblicato. Ritorna (violazioni, stats).
+
+    Le invarianti generiche stanno in `verify_state.deep_check`, condiviso col
+    test di accettazione su GitHub: qui restano solo i controlli che hanno
+    bisogno di sapere *cosa era atteso* da questa corsa.
+    """
     check = base / "verify"
     shutil.rmtree(check, ignore_errors=True)
     subprocess.run(["git", "clone", "-q", str(arena["origin"]), str(check)], check=True)
 
-    problems = []
+    problems, stats = verify_state.deep_check(check)
+
     entries = c.read_ledger(check / "ledger")
-    balances = c.load_json(check / "balances.json")["balances"]
-    events = c.load_json(check / "events.json")["events"]
-    settled = c.load_json(check / "settled.json")["settlements"]
     receipts = c.load_json(check / "receipts.json")["receipts"]
     state = c.load_json(check / "ledger" / "state.json")
+    applicate = {e["id"] for e in entries if e["kind"] == c.KIND_BET_DEBIT}
 
-    # --- I1/I2/I6/I4 con lo stesso strumento della produzione
-    sys.path.insert(0, str(check / "scripts"))
-    os.environ["ARENA_ROOT"] = str(check)
-    import rebuild_balances
-    report = rebuild_balances.audit(check)
-    for key, label in (("chain", "I1 catena"), ("balances", "I2 saldi"),
-                       ("state", "I6 indice"), ("negative", "I4 negativi")):
-        problems += [f"{label}: {p}" for p in report[key]]
-
-    # --- I6: ogni bet_id al massimo una BET_DEBIT
-    seen = {}
-    for entry in entries:
-        if entry["kind"] != c.KIND_BET_DEBIT:
-            continue
-        if entry["id"] in seen:
-            problems.append(
-                f"I6 doppia spesa: {entry['id']} applicata a seq "
-                f"{seen[entry['id']]} e {entry['seq']}"
-            )
-        seen[entry["id"]] = entry["seq"]
-
-    # --- I5: nonce strettamente crescente per utente, nell'ordine del ledger
-    last_nonce = {}
-    for entry in entries:
-        if entry["kind"] != c.KIND_BET_DEBIT:
-            continue
-        user_id, nonce = entry["user_id"], entry["nonce"]
-        if nonce <= last_nonce.get(user_id, 0):
-            problems.append(
-                f"I5 nonce non monotono per {user_id}: {nonce} dopo "
-                f"{last_nonce[user_id]} (seq {entry['seq']})"
-            )
-        last_nonce[user_id] = nonce
-
-    # --- I4 nel tempo: il saldo non deve mai passare per un negativo
-    running = {}
-    for entry in entries:
-        row = running.setdefault(entry["user_id"], {"available": 0, "at_risk": 0})
-        if entry["kind"] == c.KIND_CREDIT:
-            row["available"] += entry["amount"]
-        elif entry["kind"] == c.KIND_BET_DEBIT:
-            row["available"] -= entry["amount"]
-            row["at_risk"] += entry["amount"]
-        else:
-            row["available"] += entry["amount"]
-            row["at_risk"] -= (entry.get("meta") or {}).get("stake", 0)
-        if row["available"] < 0 or row["at_risk"] < 0:
-            problems.append(
-                f"I4 saldo negativo transitorio per {entry['user_id']} "
-                f"a seq {entry['seq']}: {row}"
-            )
-
-    # --- le bet ostili non devono esistere nel ledger, e devono essere state
-    # fermate dal controllo giusto (altrimenti un controllo ne maschera un altro)
+    # --- le bet ostili non devono esistere, e devono essere state fermate dal
+    # controllo GIUSTO: verificare solo "rifiutata" nasconderebbe un controllo
+    # che ne maschera un altro
     for bet_id, (why, expected_code) in plan["expect_never"].items():
-        if bet_id in seen:
+        if bet_id in applicate:
             problems.append(f"bet ostile applicata ({why}): {bet_id}")
-        receipt = receipts.get(bet_id)
-        if receipt is None:
+        ricevuta = receipts.get(bet_id)
+        if ricevuta is None:
             problems.append(f"bet ostile senza ricevuta ({why}): {bet_id}")
-        elif receipt["status"] != "REJECTED":
-            problems.append(f"bet ostile con ricevuta {receipt['status']}: {bet_id}")
-        elif receipt["code"] != expected_code:
+        elif ricevuta["status"] != "REJECTED":
+            problems.append(f"bet ostile con ricevuta {ricevuta['status']}: {bet_id}")
+        elif ricevuta["code"] != expected_code:
             problems.append(
                 f"bet ostile fermata dal controllo sbagliato: {bet_id} ({why}) "
-                f"atteso {expected_code}, ottenuto {receipt['code']}"
+                f"atteso {expected_code}, ottenuto {ricevuta['code']}"
             )
 
-    # --- ogni bet valida deve essere stata applicata esattamente una volta
+    # --- ogni bet valida applicata esattamente una volta
     for bet_id in plan["expect_applied"]:
-        if bet_id not in seen:
-            receipt = receipts.get(bet_id)
+        if bet_id not in applicate:
+            ricevuta = receipts.get(bet_id)
             problems.append(
                 f"bet valida non applicata: {bet_id} "
-                f"(ricevuta: {receipt['code'] if receipt else 'ASSENTE'})"
+                f"(ricevuta: {ricevuta['code'] if ricevuta else 'ASSENTE'})"
             )
         elif bet_id not in state["applied_bets"]:
             problems.append(f"bet nel ledger ma non nell'indice: {bet_id}")
 
-    # --- la ricevuta non puo' mentire al client: e' l'unica cosa che l'utente
-    # legge. Una bet nel ledger DEVE risultare APPLIED; una bet che nel ledger
-    # non c'e' DEVE risultare REJECTED. (E' qui che si vede a cosa serve I6:
-    # senza l'indice di idempotenza una consegna doppia riscriverebbe la
-    # ricevuta di una bet applicata con un ERR_NONCE.)
-    for bet_id in seen:
-        receipt = receipts.get(bet_id)
-        if receipt is None:
-            problems.append(f"bet applicata senza ricevuta: {bet_id}")
-        elif receipt["status"] != "APPLIED":
-            problems.append(
-                f"ricevuta bugiarda: {bet_id} e' nel ledger (seq {seen[bet_id]}) "
-                f"ma la ricevuta dice {receipt['status']} {receipt['code']}"
-            )
-    for bet_id, receipt in receipts.items():
-        if receipt["status"] == "APPLIED" and bet_id not in seen:
-            problems.append(
-                f"ricevuta bugiarda: {bet_id} risulta {receipt['code']} "
-                "ma nel ledger non c'e'"
-            )
-
-    # --- I8: la cache dei pool combacia col ledger
-    pools = {}
-    for entry in entries:
-        if entry["kind"] == c.KIND_BET_DEBIT:
-            pool = pools.setdefault(entry["event_id"], {"yes": 0, "no": 0})
-            pool[entry["side"]] += entry["amount"]
-    for event_id, event in events.items():
-        expected = pools.get(event_id, {"yes": 0, "no": 0})
-        if {k: int(v) for k, v in event["pool"].items()} != expected:
-            problems.append(
-                f"I8 pool disallineato per {event_id}: cache={event['pool']} "
-                f"ledger={expected}"
-            )
-
-    # --- settlement: uno solo per evento, una sola SETTLE_USER per utente
-    per_event = {}
-    for entry in entries:
-        if entry["kind"] == c.KIND_SETTLE_USER:
-            key = (entry["event_id"], entry["user_id"])
-            per_event[key] = per_event.get(key, 0) + 1
-    for (event_id, user_id), count in per_event.items():
-        if count > 1:
-            problems.append(
-                f"doppio settlement: {count} SETTLE_USER per {user_id} su {event_id}"
-            )
+    # --- gli eventi che abbiamo liquidato devono risultare liquidati
+    settled = c.load_json(check / "settled.json")["settlements"]
     for event_id in settled_events:
         if event_id not in settled:
             problems.append(f"evento {event_id} liquidato ma assente da settled.json")
-            continue
-        rec = settled[event_id]
-        if rec["payout_total"] + rec["takeout"] + rec["dust_to_house"] != rec["T"]:
-            problems.append(f"I3 conservazione rotta su {event_id}: {rec}")
-        for user_id, row in balances.items():
-            if row["at_risk"] < 0:
-                problems.append(f"at_risk negativo per {user_id}")
 
-    # --- conservazione globale: credito = saldi + incasso della casa
-    credited = sum(e["amount"] for e in entries if e["kind"] == c.KIND_CREDIT)
-    held = sum(r["available"] + r["at_risk"] for r in balances.values())
-    house = sum(r["house_total"] for r in settled.values())
-    if credited != held + house:
-        problems.append(
-            f"conservazione globale rotta: accreditato={credited} "
-            f"saldi={held} casa={house} (delta={credited - held - house})"
-        )
-
-    # --- la coda deve essersi svuotata (effetti collaterali convergenti)
+    # --- la coda si e' svuotata: gli effetti collaterali convergono
     queue = json.loads(Path(base / "queue.json").read_text(encoding="utf-8"))
-    still_open = [i["number"] for i in queue if i.get("state", "open") == "open"]
-    if still_open:
-        problems.append(f"issue ancora aperte a fine corsa: {still_open[:10]}")
+    aperte = [i["number"] for i in queue if i.get("state", "open") == "open"]
+    if aperte:
+        problems.append(f"issue ancora aperte a fine corsa: {aperte[:10]}")
 
-    stats = {
-        "entries": len(entries), "bet_debit": len(seen),
-        "credited": credited, "held": held, "house": house,
-        "settled": len(settled), "receipts": len(receipts),
-    }
-    return problems, stats
+    return problems, {"entries": stats["entries"], "bet_debit": stats["bet_applicate"],
+                      "credited": stats["accreditato"], "held": stats["nei_saldi"],
+                      "house": stats["casa"], "settled": stats["liquidati"],
+                      "receipts": stats["ricevute"]}
 
 
 # ==========================================================================

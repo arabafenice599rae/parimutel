@@ -1,33 +1,4 @@
 {
-  "events": {
-    "ev_prova": {
-      "bet_count": {
-        "no": 1,
-        "yes": 1
-      },
-      "close_at": "2026-09-12T23:00:00Z",
-      "currency": "PTS",
-      "id": "ev_prova",
-      "max_bet": 100000,
-      "min_bet": 10,
-      "open_at": "2026-09-12T17:36:38Z",
-      "outcome": "no",
-      "pool": {
-        "no": 2000,
-        "yes": 3000
-      },
-      "resolved_at": "2026-09-12T17:53:15Z",
-      "settled_at": "2026-09-12T17:53:15Z",
-      "side_labels": {
-        "no": "No",
-        "yes": "Si"
-      },
-      "state": "SETTLED",
-      "takeout_bps": 300,
-      "title": "Prova end-to-end",
-      "unit_scale": 1,
-      "void_if_one_sided": true
-    }
-  },
+  "events": {},
   "version": 1
 }

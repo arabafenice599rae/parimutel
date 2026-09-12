@@ -1,0 +1,25 @@
+{
+  "settlements": {
+    "ev_prova": {
+      "T": 5000,
+      "distributable": 4850,
+      "dust_to_house": 0,
+      "event_id": "ev_prova",
+      "house_total": 150,
+      "last_seq": 6,
+      "outcome": "no",
+      "payout_total": 4850,
+      "pool": {
+        "no": 2000,
+        "yes": 3000
+      },
+      "settled_at": "2026-09-12T17:53:15Z",
+      "takeout": 150,
+      "takeout_bps": 300,
+      "void": false,
+      "winning_pool": 2000,
+      "winning_side": "no"
+    }
+  },
+  "version": 1
+}

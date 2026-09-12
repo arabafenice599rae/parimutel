@@ -1,0 +1,10 @@
+{
+  "applied_bets": {
+    "u_03b325ba-1": 3,
+    "u_1b676e26-1": 4
+  },
+  "current_shard": "2026-09.ndjson",
+  "head_hash": "5aaf1f8131b978eac6c521a662181df381730f98a666f69610af550a20fd2b8f",
+  "last_seq": 6,
+  "version": 1
+}

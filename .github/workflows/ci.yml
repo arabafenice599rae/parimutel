@@ -25,4 +25,8 @@ jobs:
           python3 scripts/stress_test.py --users 20 --bets 4 --runners 6 \
             --rounds 10 --crash-rate 0.3
       - name: Invarianti sullo stato committato
-        run: python3 scripts/rebuild_balances.py
+        # verify_state e' piu' severo di rebuild_balances: oltre a catena e
+        # saldi controlla nonce, pool, idempotenza, ricevute e conservazione
+        # globale. E' lo stesso verificatore usato dallo stress test e dal
+        # test di accettazione.
+        run: python3 scripts/verify_state.py
