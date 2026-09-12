@@ -1095,5 +1095,140 @@ class TestFixtureProvaReale(unittest.TestCase):
         self.assertEqual(debiti[0]["amount"], 3000)
 
 
+# ==========================================================================
+class TestChiusuraAnticipata(ArenaCase):
+    """§6 — chiudere la finestra prima di close_at e' un'operazione owner."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_user("u_a")
+        self.credit("u_a", 10000)
+        self.make_event("ev1", close_in=120)
+
+    def test_chiude_e_blocca_le_bet_successive(self):
+        self.place(self.make_bet("u_a", "ev1", "yes", 100, 1), expect=0)
+        self.run_script("close_event.py", "--event", "ev1")
+
+        ev = self.events()["ev1"]
+        self.assertEqual(ev["state"], "OPEN", "chiudere non liquida")
+        self.assertIsNotNone(ev["closed_early_at"])
+        self.assertIn("close_at_original", ev)
+
+        # la bet gia' applicata resta; le nuove no
+        ws = c.WorkingState()
+        res = c.validate_and_apply(self.make_bet("u_a", "ev1", "yes", 100, 2),
+                                   ws, c.load_user_secrets())
+        self.assertEqual(res.code, c.ERR_EVENT_CLOSED)
+        self.assertEqual(self.events()["ev1"]["pool"]["yes"], 100)
+        self.assert_healthy()
+
+    def test_dopo_la_chiusura_si_liquida_senza_force(self):
+        self.place(self.make_bet("u_a", "ev1", "yes", 100, 1), expect=0)
+        self.add_user("u_b")
+        self.credit("u_b", 10000)
+        self.place(self.make_bet("u_b", "ev1", "no", 100, 1), expect=0)
+        self.run_script("settle.py", "--event", "ev1", "--outcome", "yes",
+                        expect=1)          # finestra ancora aperta
+        self.run_script("close_event.py", "--event", "ev1")
+        self.run_script("settle.py", "--event", "ev1", "--outcome", "yes")
+        self.assertIn("ev1", self.settlements())
+        self.assert_healthy()
+
+    def test_e_idempotente(self):
+        self.run_script("close_event.py", "--event", "ev1")
+        quando = self.events()["ev1"]["close_at"]
+        proc = self.run_script("close_event.py", "--event", " ev1 ", expect=0)
+        self.assertIn("DUP", proc.stdout)
+        self.assertEqual(self.events()["ev1"]["close_at"], quando)
+
+    def test_non_chiude_un_evento_liquidato(self):
+        self.make_event("ev_done", state="SETTLED")
+        self.run_script("close_event.py", "--event", "ev_done", expect=1)
+
+
+# ==========================================================================
+class TestConsoleAdmin(unittest.TestCase):
+    """La console non deve fare i conti: deve chiamare common.py.
+
+    I numeri attesi sono quelli veri della prova su GitHub (§fixture).
+    """
+
+    FIXTURE = REPO / "tests" / "fixtures" / "prova-reale"
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / "client"))
+        import arena_admin
+        self.admin = arena_admin
+        self.tmp = Path(tempfile.mkdtemp(prefix="arena-admin-"))
+        shutil.copytree(self.FIXTURE, self.tmp / "cache")
+        (self.tmp / "admin.json").write_text(
+            json.dumps({"repo": "owner/arena", "branch": "main"}), encoding="utf-8")
+        self._env = dict(os.environ)
+        os.environ["ARENA_ADMIN_HOME"] = str(self.tmp)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def esegui(self, *argv):
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena_admin.py"), *argv,
+             "--offline"],
+            capture_output=True, text=True, env=os.environ.copy(), timeout=120,
+        )
+        return proc
+
+    def test_i_conti_vengono_dal_ledger(self):
+        conti = self.admin.conti_globali(self.tmp / "cache", c)
+        self.assertEqual(conti["emessi"], 20000)
+        self.assertEqual(conti["disponibili"], 19850)
+        self.assertEqual(conti["in_gioco"], 0)
+        self.assertEqual(conti["casa"], 150)
+        self.assertTrue(conti["quadra"])
+
+    def test_la_dashboard_mostra_i_numeri_veri(self):
+        proc = self.esegui("dashboard")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("20.000", proc.stdout)
+        self.assertIn("19.850", proc.stdout)
+        self.assertIn("quadra", proc.stdout)
+
+    def test_la_verifica_usa_lo_stesso_verificatore_della_CI(self):
+        proc = self.esegui("verifica")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("Tutto in ordine", proc.stdout)
+
+    def test_la_verifica_fallisce_su_uno_stato_manomesso(self):
+        saldi = json.loads((self.tmp / "cache" / "balances.json").read_text())
+        saldi["balances"]["u_03b325ba"]["available"] = 999999
+        (self.tmp / "cache" / "balances.json").write_text(json.dumps(saldi))
+        proc = self.esegui("verifica")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("PROBLEMI", proc.stdout)
+
+    def test_la_scheda_utente_elenca_i_movimenti(self):
+        proc = self.esegui("utente", "u_1b676e26")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("CREDIT", proc.stdout)
+        self.assertIn("BET ev_prova no", proc.stdout)
+        self.assertIn("SETTLE ev_prova", proc.stdout)
+        self.assertIn("12.850", proc.stdout)
+
+    def test_l_anteprima_chiama_il_settlement_vero(self):
+        """Non ricalcola: importa compute_settlement da settle.py."""
+        proc = self.esegui("anteprima", "ev_prova", "yes")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("4.850", proc.stdout)   # payout del lato yes
+        self.assertIn("150", proc.stdout)     # takeout
+        proc = self.esegui("anteprima", "ev_prova", "void")
+        self.assertIn("RIMBORSO TOTALE", proc.stdout)
+
+    def test_le_viste_non_esplodono(self):
+        for comando in ("eventi", "utenti", "conti", "ledger", "settlement"):
+            proc = self.esegui(comando)
+            self.assertEqual(proc.returncode, 0, f"{comando}: {proc.stderr}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
