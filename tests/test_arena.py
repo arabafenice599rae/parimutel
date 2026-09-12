@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -832,6 +833,63 @@ class TestClient(ArenaCase):
         self.assertNotEqual(proc.returncode, 0)
         # il config di setUp e' intatto
         self.assertEqual(json.loads(self.cfg_path.read_text())["secret"], self.secret)
+
+    def test_config_finisce_in_Documents_anche_se_home_non_e_scrivibile(self):
+        """Il caso a-Shell: home e' la radice del container, in sola lettura.
+
+        Sceglierlo "solo se esiste gia'" non basta: alla prima installazione
+        non esiste nulla e si finisce sulla cartella sbagliata. Successo
+        davvero, su iPhone, con un PermissionError.
+        """
+        finto_home = self.tmp / "ashell"
+        (finto_home / "Documents").mkdir(parents=True)
+        os.environ.pop("ARENA_CONFIG", None)
+        os.chmod(finto_home, 0o500)
+        try:
+            with unittest.mock.patch.object(client.Path, "home",
+                                            staticmethod(lambda: finto_home)):
+                scelto = client.config_path()
+            self.assertEqual(scelto, finto_home / "Documents" / ".arena" / "config.json")
+        finally:
+            os.chmod(finto_home, 0o700)
+            os.environ["ARENA_CONFIG"] = str(self.cfg_path)
+
+    def test_un_config_esistente_vince_sulla_preferenza(self):
+        finto_home = self.tmp / "ashell2"
+        (finto_home / "Documents").mkdir(parents=True)
+        vecchio = finto_home / ".arena" / "config.json"
+        vecchio.parent.mkdir(parents=True)
+        vecchio.write_text("{}", encoding="utf-8")
+        os.environ.pop("ARENA_CONFIG", None)
+        try:
+            with unittest.mock.patch.object(client.Path, "home",
+                                            staticmethod(lambda: finto_home)):
+                self.assertEqual(client.config_path(), vecchio)
+        finally:
+            os.environ["ARENA_CONFIG"] = str(self.cfg_path)
+
+    def test_un_token_spurio_non_viene_salvato(self):
+        """Su a-Shell l'output di curl e' finito dentro il prompt del token."""
+        self.assertFalse(client.sembra_un_token("100"))
+        self.assertFalse(client.sembra_un_token("100 17894"))
+        self.assertFalse(client.sembra_un_token("si"))
+        self.assertTrue(client.sembra_un_token("ghp_" + "a" * 36))
+        self.assertTrue(client.sembra_un_token("github_pat_" + "b" * 40))
+
+    def test_init_scarta_il_token_spurio_ma_salva_il_resto(self):
+        nuovo = self.tmp / "conf3" / "config.json"
+        os.environ["ARENA_CONFIG"] = str(nuovo)
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena.py"), "init",
+             "--user-id", "u_ab12ef34", "--secret", "c" * 64,
+             "--repo", "owner/arena", "--token", "100"],
+            capture_output=True, text=True, env=os.environ.copy(),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("non sembra un token", proc.stdout)
+        cfg = json.loads(nuovo.read_text(encoding="utf-8"))
+        self.assertNotIn("token", cfg)
+        self.assertEqual(cfg["user_id"], "u_ab12ef34")
 
     def test_multiplier_matches_the_server_formula(self):
         pool = {"yes": 300, "no": 700}

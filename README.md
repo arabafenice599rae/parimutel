@@ -258,7 +258,7 @@ stampare un segreto in chiaro — si usa `--recipient <chiave age>`.
 
 ### Installazione sul telefono
 
-In a-Shell, tre comandi:
+In a-Shell, tre comandi — **uno alla volta**, aspettando che ognuno finisca:
 
 ```bash
 cd ~/Documents
@@ -266,9 +266,16 @@ curl -O https://raw.githubusercontent.com/<owner>/<arena>/main/client/arena.py
 python3 arena.py init
 ```
 
+Incollandoli tutti insieme, un pezzo dell'output di `curl` finisce dentro il
+primo prompt di `init` (succede davvero: la barra di avanzamento lascia un
+`100` nel buffer). Il client se ne accorge e scarta il valore, ma e' piu'
+semplice non farglielo vedere.
+
 `init` chiede un valore per volta (user_id, secret, repo, token), scrive
 `~/Documents/.arena/config.json` con permessi `600` e **verifica subito che
-l'arena risponda**. Scrivere a mano un JSON con dentro 64 caratteri
+l'arena risponda**. Su a-Shell `~/Documents` e' l'unica cartella scrivibile —
+`Path.home()` punta alla radice del container dell'app, che e' in sola
+lettura — e il client lo tiene in conto quando sceglie dove salvare. Scrivere a mano un JSON con dentro 64 caratteri
 esadecimali, su una tastiera da telefono, e' il modo migliore per sbagliare un
 carattere e non capire perche' ogni bet prende `ERR_SIG`.
 
