@@ -530,13 +530,27 @@ def sembra_un_token(valore: str) -> bool:
     return len(valore) >= 36 and all(ch.isalnum() or ch in "_-" for ch in valore)
 
 
-def scarica_moduli(cfg):
-    """Porta accanto alla console il motore contabile del progetto."""
+def scarica_moduli(cfg, obbligatorio: bool = True):
+    """Porta accanto alla console il motore contabile del progetto.
+
+    Al primo setup e' obbligatorio: senza quei moduli la console non sa fare i
+    conti. Quando invece si sta solo rinfrescando un'installazione che c'e'
+    gia', un errore di rete non deve rendere inutilizzabile il pannello: si
+    avvisa e si tengono i moduli gia' presenti.
+    """
     qui = Path(__file__).resolve().parent
     print("scarico i moduli del progetto (il motore contabile, non una copia):")
     for modulo in MODULI:
-        scarica_file(cfg, f"scripts/{modulo}", qui / modulo)
-        print(f"  {modulo}")
+        try:
+            scarica_file(cfg, f"scripts/{modulo}", qui / modulo)
+            print(f"  {modulo}")
+        except SystemExit as exc:
+            if obbligatorio:
+                raise
+            presente = "(tengo quello gia' presente)" if (qui / modulo).exists() \
+                else "(MANCA: la console non funzionera')"
+            print(f"  {modulo}: aggiornamento fallito {presente}")
+            print(f"    {exc}")
 
 
 def azione_setup(args):
@@ -550,7 +564,7 @@ def azione_setup(args):
               f"(--force per rifarlo)")
         print(f"  repo: {cfg['repo']}  branch: {cfg['branch']}  "
               f"token: {'si' if cfg.get('token') else 'no (sola lettura)'}")
-        scarica_moduli(cfg)
+        scarica_moduli(cfg, obbligatorio=False)
         print("\nPronto: python3 arena_admin.py")
         return 0
     repo = args.repo or chiedi("repo (owner/nome)")
