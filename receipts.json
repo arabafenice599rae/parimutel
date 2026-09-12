@@ -1,4 +1,11 @@
 {
-  "receipts": {},
+  "receipts": {
+    "u_03b325ba-99": {
+      "code": "ERR_EVENT_MISSING",
+      "reason": "evento sconosciuto: ev_prova",
+      "status": "REJECTED",
+      "ts": "2026-09-12T17:33:15Z"
+    }
+  },
   "version": 1
 }
