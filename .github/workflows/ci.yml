@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Suite di conformita' (I1-I10)
+        run: python3 -m unittest discover -s tests -v
+      - name: Smoke test end-to-end (§15)
+        run: ./scripts/test_smoke.sh
+      - name: Invarianti sullo stato committato
+        run: python3 scripts/rebuild_balances.py

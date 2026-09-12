@@ -1,0 +1,38 @@
+name: create_event
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_id: { description: "id dell'evento", required: true }
+      title:    { description: "titolo", required: true }
+      close_at: { description: "chiusura ISO-8601 UTC (2026-09-20T18:00:00Z)", required: true }
+      yes_label: { description: "etichetta lato yes", required: false, default: "Yes" }
+      no_label:  { description: "etichetta lato no",  required: false, default: "No" }
+      takeout_bps: { description: "spread implicito in bps", required: false, default: "300" }
+      min_bet: { description: "puntata minima", required: false, default: "100" }
+      max_bet: { description: "puntata massima", required: false, default: "1000000" }
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apri l'evento
+        run: |
+          python3 scripts/create_event.py \
+            --id "${{ github.event.inputs.event_id }}" \
+            --title "${{ github.event.inputs.title }}" \
+            --close-at "${{ github.event.inputs.close_at }}" \
+            --yes "${{ github.event.inputs.yes_label }}" \
+            --no "${{ github.event.inputs.no_label }}" \
+            --takeout-bps "${{ github.event.inputs.takeout_bps }}" \
+            --min-bet "${{ github.event.inputs.min_bet }}" \
+            --max-bet "${{ github.event.inputs.max_bet }}" \
+            --commit

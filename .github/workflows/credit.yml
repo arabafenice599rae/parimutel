@@ -1,0 +1,44 @@
+name: credit
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_id:
+        description: "user_id destinatario"
+        required: true
+      amount:
+        description: "intero (negativo = rettifica)"
+        required: true
+      reason:
+        description: "nota operativa"
+        required: false
+        default: ""
+      credit_id:
+        description: "id idempotente (default: generato)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  credit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Accredita
+        run: |
+          python3 scripts/credit.py \
+            --user "${{ github.event.inputs.user_id }}" \
+            --amount "${{ github.event.inputs.amount }}" \
+            --reason "${{ github.event.inputs.reason }}" \
+            ${{ github.event.inputs.credit_id != '' && format('--id "{0}"', github.event.inputs.credit_id) || '' }} \
+            --commit
+
+      - name: Verifica le invarianti
+        run: python3 scripts/rebuild_balances.py
