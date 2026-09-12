@@ -172,13 +172,24 @@ def cartella_moduli() -> Path:
     return qui
 
 
-def importa_moduli():
+def importa_moduli(cfg=None):
+    """Carica il motore contabile, scaricandolo se manca.
+
+    Se un setup si e' interrotto a meta' (config scritto, moduli no) la console
+    sa gia' da dove prenderli: mandare l'utente a rilanciare un comando che
+    trovera' il config e si fermera' e' il modo migliore per incastrarlo.
+    """
     qui = cartella_moduli()
     mancanti = [m for m in MODULI if not (qui / m).exists()]
+    if mancanti and cfg:
+        print(f"mancano {len(mancanti)} moduli del progetto: li scarico ora")
+        scarica_moduli(cfg)
+        qui = cartella_moduli()
+        mancanti = [m for m in MODULI if not (qui / m).exists()]
     if mancanti:
         raise SystemExit(
             "mancano i moduli del progetto: " + ", ".join(mancanti) +
-            "\nScaricali con:  python3 arena_admin.py setup"
+            "\nScaricali con:  python3 arena_admin.py setup --force"
         )
     sys.path.insert(0, str(qui))
     import common
@@ -717,7 +728,7 @@ def main(argv=None) -> int:
     cfg = carica_config()
     if args.comando == "aggiorna":
         return azione_aggiorna(cfg)
-    comune, liquida, verifica_stato = importa_moduli()
+    comune, liquida, verifica_stato = importa_moduli(cfg)
     cache = cache_dir() if args.offline else aggiorna_stato(cfg, silenzioso=True)
     if not (cache / "ledger").exists():
         raise SystemExit("cache assente: lancia senza --offline")
