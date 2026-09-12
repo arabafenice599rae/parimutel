@@ -1,7 +1,20 @@
 {
-  "as_of_seq": 0,
-  "balances": {},
-  "head_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-  "updated_at": "1970-01-01T00:00:00Z",
+  "as_of_seq": 2,
+  "balances": {
+    "u_03b325ba": {
+      "at_risk": 0,
+      "available": 50000,
+      "last_nonce": 0,
+      "lifetime_credited": 50000
+    },
+    "u_1b676e26": {
+      "at_risk": 0,
+      "available": 50000,
+      "last_nonce": 0,
+      "lifetime_credited": 50000
+    }
+  },
+  "head_hash": "38c5b801107a46b878e4443aa65917dff4c30b703c862a21a2e29c8feb61651d",
+  "updated_at": "2026-09-12T19:42:45Z",
   "version": 1
 }

@@ -1,4 +1,61 @@
 {
-  "events": {},
+  "events": {
+    "ev_acc0": {
+      "bet_count": {
+        "no": 0,
+        "yes": 0
+      },
+      "close_at": "2026-09-13T12:00:00Z",
+      "currency": "PTS",
+      "id": "ev_acc0",
+      "max_bet": 5000000,
+      "min_bet": 10,
+      "open_at": "2026-09-12T19:42:45Z",
+      "outcome": null,
+      "pool": {
+        "no": 0,
+        "yes": 0
+      },
+      "resolved_at": null,
+      "settled_at": null,
+      "side_labels": {
+        "no": "No",
+        "yes": "Si"
+      },
+      "state": "OPEN",
+      "takeout_bps": 300,
+      "title": "Accettazione ev_acc0",
+      "unit_scale": 1,
+      "void_if_one_sided": true
+    },
+    "ev_acc1": {
+      "bet_count": {
+        "no": 0,
+        "yes": 0
+      },
+      "close_at": "2026-09-13T12:00:00Z",
+      "currency": "PTS",
+      "id": "ev_acc1",
+      "max_bet": 5000000,
+      "min_bet": 10,
+      "open_at": "2026-09-12T19:42:45Z",
+      "outcome": null,
+      "pool": {
+        "no": 0,
+        "yes": 0
+      },
+      "resolved_at": null,
+      "settled_at": null,
+      "side_labels": {
+        "no": "No",
+        "yes": "Si"
+      },
+      "state": "OPEN",
+      "takeout_bps": 300,
+      "title": "Accettazione ev_acc1",
+      "unit_scale": 1,
+      "void_if_one_sided": true
+    }
+  },
   "version": 1
 }
