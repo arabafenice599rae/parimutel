@@ -1,0 +1,47 @@
+name: settle
+
+on:
+  workflow_dispatch:
+    inputs:
+      event_id:
+        description: "event_id da liquidare"
+        required: true
+      outcome:
+        description: "yes | no | void"
+        required: true
+        type: choice
+        options: ["yes", "no", "void"]
+      force:
+        description: "liquida anche prima di close_at"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "calcola e stampa senza scrivere"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Liquida l'evento
+        run: |
+          python3 scripts/settle.py \
+            --event "${{ github.event.inputs.event_id }}" \
+            --outcome "${{ github.event.inputs.outcome }}" \
+            ${{ github.event.inputs.force == 'true' && '--force' || '' }} \
+            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '--commit' }}
+
+      - name: Verifica le invarianti dopo il settlement
+        run: python3 scripts/rebuild_balances.py

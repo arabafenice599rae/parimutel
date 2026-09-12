@@ -1,0 +1,52 @@
+name: register
+
+# ATTENZIONE (§5.4): con repo PUBBLICO i log del run sono pubblici, quindi
+# `print_config` va lasciato a false e va usato `recipient` (chiave age
+# dell'owner): il config viene stampato cifrato e si decifra in locale.
+on:
+  workflow_dispatch:
+    inputs:
+      recipient:
+        description: "chiave pubblica age dell'owner (repo pubblico)"
+        required: false
+        default: ""
+      print_config:
+        description: "stampa il config in chiaro (SOLO con repo privato)"
+        required: false
+        type: boolean
+        default: false
+      note:
+        description: "nota operativa (non pubblicata nel config)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    env:
+      USER_SECRETS: ${{ secrets.USER_SECRETS }}
+      AGE_KEY: ${{ secrets.AGE_KEY }}
+      RECIPIENT: ${{ github.event.inputs.recipient }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa age
+        if: env.AGE_KEY != '' || env.RECIPIENT != ''
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - name: Registra l'utente
+        run: |
+          python3 scripts/register.py \
+            --repo "${{ github.repository }}" \
+            --branch "${{ github.ref_name }}" \
+            --note "${{ github.event.inputs.note }}" \
+            ${{ github.event.inputs.recipient != '' && format('--recipient "{0}"', github.event.inputs.recipient) || '' }} \
+            ${{ github.event.inputs.print_config == 'true' && '--print-config' || '' }} \
+            --commit

@@ -1,0 +1,39 @@
+name: place_bet
+
+# Canale alternativo (§7.5): un run per scommessa. Semplice, ma ~20-40s a bet.
+# Per il multiutente conviene la coda di Issue (drain.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      bet:
+        description: "Payload JSON firmato della bet (§3.6)"
+        required: true
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  place:
+    runs-on: ubuntu-latest
+    env:
+      BET_JSON: ${{ github.event.inputs.bet }}
+      USER_SECRETS: ${{ secrets.USER_SECRETS }}
+      AGE_KEY: ${{ secrets.AGE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa age (solo se i segreti sono cifrati)
+        if: env.AGE_KEY != ''
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - name: Applica la bet
+        # La bet rifiutata non e' un errore di infrastruttura: la ricevuta e'
+        # gia' in receipts.json, quindi il run resta verde.
+        run: python3 scripts/place_bet.py --commit || true
+
+      - name: Verifica le invarianti
+        run: python3 scripts/rebuild_balances.py

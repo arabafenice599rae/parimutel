@@ -1,0 +1,47 @@
+name: drain
+
+# Canale d'ingresso primario (§7): la coda e' fatta di Issue con label `bet`.
+# Un run drena TUTTA la coda e fa UN commit; i trigger concomitanti collassano
+# grazie al gruppo di concorrenza condiviso con settle/credit.
+on:
+  issues:
+    types: [opened]
+  schedule:
+    - cron: "*/2 * * * *"     # rete di sicurezza contro i trigger persi
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Numero massimo di issue per lotto"
+        required: false
+        default: "200"
+
+concurrency:
+  group: ledger-write
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      USER_SECRETS: ${{ secrets.USER_SECRETS }}
+      AGE_KEY: ${{ secrets.AGE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa age (solo se i segreti sono cifrati)
+        if: env.AGE_KEY != ''
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - name: Svuota la coda
+        run: |
+          python3 scripts/drain.py \
+            --limit "${{ github.event.inputs.limit || 200 }}" \
+            --commit
+
+      - name: Verifica le invarianti dopo il lotto
+        run: python3 scripts/rebuild_balances.py

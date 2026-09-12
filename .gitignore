@@ -1,0 +1,11 @@
+# Segreti in chiaro: non entrano MAI nel repo (solo secrets.age, che e' cifrato)
+.secrets.json
+*.key
+*.agekey
+
+# Artefatti locali
+__pycache__/
+*.pyc
+.tmp-*
+effects.json
+queue.json
