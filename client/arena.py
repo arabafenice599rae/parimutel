@@ -44,12 +44,41 @@ RAW = "https://raw.githubusercontent.com"
 # Config e stato locale
 # --------------------------------------------------------------------------
 
+def _candidati_config():
+    """Dove puo' stare il config, in ordine di preferenza.
+
+    Su a-Shell `Path.home()` NON e' `~/Documents`: e' la radice del container
+    dell'app, che e' in sola lettura. L'unica cartella scrivibile e'
+    `~/Documents`. Scegliere in base a "esiste gia'?" non basta: alla prima
+    installazione non esiste nulla e si finirebbe sul percorso sbagliato.
+    """
+    home = Path.home()
+    return [
+        home / "Documents" / ".arena" / "config.json",
+        home / ".arena" / "config.json",
+        Path.cwd() / ".arena" / "config.json",
+    ]
+
+
+def _scrivibile(directory: Path) -> bool:
+    try:
+        return directory.is_dir() and os.access(directory, os.W_OK)
+    except OSError:
+        return False
+
+
 def config_path() -> Path:
     env = os.environ.get("ARENA_CONFIG")
     if env:
         return Path(env).expanduser()
-    preferred = Path.home() / "Documents" / ".arena" / "config.json"
-    return preferred if preferred.exists() else Path.home() / ".arena" / "config.json"
+    candidati = _candidati_config()
+    for percorso in candidati:                 # un config gia' scritto vince
+        if percorso.exists():
+            return percorso
+    for percorso in candidati:                 # altrimenti: il primo scrivibile
+        if _scrivibile(percorso.parent) or _scrivibile(percorso.parent.parent):
+            return percorso
+    return candidati[-1]
 
 
 def load_config() -> dict:
@@ -336,6 +365,18 @@ def cmd_bet(cfg, args):
     return show_receipt(bet["bet_id"], poll_receipt(cfg, bet["bet_id"], args.timeout))
 
 
+def sembra_un_token(valore: str) -> bool:
+    """Riconoscimento grossolano di un token GitHub.
+
+    Non valida il token (solo GitHub puo' farlo): scarta le sciocchezze
+    evidenti, tipo un pezzo di output di curl finito nel prompt.
+    """
+    valore = valore.strip()
+    if valore.startswith(("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")):
+        return True
+    return len(valore) >= 36 and all(ch.isalnum() or ch in "_-" for ch in valore)
+
+
 def cmd_init(cfg, args):
     """Scrive il config e verifica subito che funzioni.
 
@@ -362,6 +403,13 @@ def cmd_init(cfg, args):
     token = args.token if args.token is not None else chiedi(
         "token GitHub (serve solo per scommettere, invio per saltare)",
         obbligatorio=False)
+    if token and not sembra_un_token(token):
+        # Su a-Shell capita che testo di un comando precedente finisca dentro
+        # la risposta: meglio scartarlo che salvare un token finto e scoprirlo
+        # al primo 401 durante una scommessa.
+        print(f"  '{token[:16]}' non sembra un token GitHub: lo ignoro.")
+        print("  Aggiungilo poi con: python3 arena.py init --force")
+        token = ""
 
     # Meglio accorgersene adesso che al primo ERR_SIG.
     if not USER_ID_RE.match(user_id):
@@ -376,8 +424,16 @@ def cmd_init(cfg, args):
     if token:
         cfg["token"] = token
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(
+            f"non riesco a scrivere {path}: {exc}\n"
+            "Su a-Shell l'unica cartella scrivibile e' ~/Documents: prova\n"
+            "  cd ~/Documents && python3 arena.py init"
+        )
     try:
         os.chmod(path, 0o600)
     except OSError:
