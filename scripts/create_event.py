@@ -90,10 +90,10 @@ def main(argv=None) -> int:
     print(f"OPEN {args.event_id}: \"{args.title}\" chiude {args.close_at} "
           f"takeout={args.takeout_bps}bps limiti=[{args.min_bet},{args.max_bet}]")
     if args.commit:
-        c.commit_and_push(
+        return c.commit_and_push_cli(
             ["events.json"], f"open event {args.event_id}", push=not args.no_push
         )
-    return 0
+    return c.EXIT_OK
 
 
 if __name__ == "__main__":

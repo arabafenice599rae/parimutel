@@ -58,14 +58,19 @@ step "tre bet valide (yes/yes/no) via workflow_dispatch"
 "$PY" "$HERE/place_bet.py" --json "$(sign u_anna  ev_smoke no  100 1)"
 
 step "casi negativi"
+# Una bet rifiutata esce con 10 (esito normale), MAI con 1 (guasto).
+expect_rejected() {  # expect_rejected <descrizione> <payload>
+  set +e; "$PY" "$HERE/place_bet.py" --json "$2" >/dev/null; local rc=$?; set -e
+  [ "$rc" -eq 10 ] || fail "$1: atteso exit 10 (REJECTED), ottenuto $rc"
+  ok "$1 (exit 10)"
+}
 BAD="$(sign u_mario ev_smoke yes 100 2 | "$PY" -c 'import json,sys; b=json.load(sys.stdin); b["amount"]=5000; print(json.dumps(b))')"
-"$PY" "$HERE/place_bet.py" --json "$BAD" && fail "ERR_SIG non rilevato" || ok "ERR_SIG"
+expect_rejected "ERR_SIG" "$BAD"
 "$PY" "$HERE/place_bet.py" --json "$(sign u_mario ev_smoke yes 100 1)" | grep -q DUP \
-  && ok "DUP" || fail "DUP atteso"
+  && ok "DUP (exit 0: un duplicato e' un successo)" || fail "DUP atteso"
 "$PY" "$HERE/place_bet.py" --json "$(sign u_anna ev_smoke no 4000 2)" >/dev/null
 "$PY" "$HERE/place_bet.py" --json "$(sign u_anna ev_smoke no 4000 3)" >/dev/null
-"$PY" "$HERE/place_bet.py" --json "$(sign u_anna ev_smoke no 4000 4)" \
-  && fail "ERR_BALANCE non rilevato" || ok "ERR_BALANCE"
+expect_rejected "ERR_BALANCE" "$(sign u_anna ev_smoke no 4000 4)"
 
 step "lotto via coda di issue (drain)"
 QUEUE="$ARENA/queue.json"

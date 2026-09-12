@@ -132,8 +132,9 @@ def main(argv=None) -> int:
     if stored == "age":
         paths.append("secrets.age")
     if args.commit:
-        c.commit_and_push(paths, f"register {user_id}", push=not args.no_push)
-    return 0
+        return c.commit_and_push_cli(paths, f"register {user_id}",
+                                     push=not args.no_push)
+    return c.EXIT_OK
 
 
 if __name__ == "__main__":

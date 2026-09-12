@@ -18,5 +18,11 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Smoke test end-to-end (§15)
         run: ./scripts/test_smoke.sh
+      - name: Stress test di concorrenza (scrittori simultanei, crash, conflitti)
+        run: |
+          git config --global user.email "ci@arena.test"
+          git config --global user.name "arena ci"
+          python3 scripts/stress_test.py --users 20 --bets 4 --runners 6 \
+            --rounds 10 --crash-rate 0.3
       - name: Invarianti sullo stato committato
         run: python3 scripts/rebuild_balances.py
