@@ -905,5 +905,86 @@ class TestWorkflowInputs(unittest.TestCase):
                              f"{path.name} maschera gli errori")
 
 
+# ==========================================================================
+class TestFixtureProvaReale(unittest.TestCase):
+    """Rigioca il ledger della prima prova reale su GitHub Actions.
+
+    E' l'unico test della suite i cui dati non sono inventati: li hanno
+    prodotti i workflow su runner veri (vedi tests/fixtures/prova-reale/).
+    Se una modifica futura cambia il significato di una entry, o la
+    matematica del settlement, qui si vede subito.
+    """
+
+    FIXTURE = REPO / "tests" / "fixtures" / "prova-reale"
+
+    def setUp(self):
+        self.entries = c.read_ledger(self.FIXTURE / "ledger")
+        self.balances = c.load_json(self.FIXTURE / "balances.json")["balances"]
+        self.settled = c.load_json(self.FIXTURE / "settled.json")["settlements"]
+        self.receipts = c.load_json(self.FIXTURE / "receipts.json")["receipts"]
+
+    def test_la_catena_regge(self):
+        self.assertEqual(c.verify_chain(self.entries), [])
+        self.assertEqual(
+            self.entries[-1]["hash"],
+            "5aaf1f8131b978eac6c521a662181df381730f98a666f69610af550a20fd2b8f",
+            "l'hash di testa e' cambiato: il formato delle entry non e' piu' "
+            "quello con cui e' stato firmato questo ledger",
+        )
+
+    def test_i_saldi_si_ricostruiscono_uguali(self):
+        rebuilt, last_seq, head = c.reduce_balances(self.entries)
+        self.assertEqual(c.diff_balances(self.balances, rebuilt), [])
+        self.assertEqual(last_seq, 6)
+
+    def test_i_numeri_del_settlement(self):
+        rec = self.settled["ev_prova"]
+        self.assertEqual(rec["T"], 5000)
+        self.assertEqual(rec["takeout"], 150)          # 5000 * 300 // 10000
+        self.assertEqual(rec["distributable"], 4850)
+        self.assertEqual(rec["winning_side"], "no")
+        self.assertEqual(rec["winning_pool"], 2000)
+        self.assertEqual(rec["payout_total"], 4850)
+        self.assertEqual(rec["dust_to_house"], 0)
+        self.assertEqual(rec["house_total"], 150)
+        # I3: la conservazione, sui numeri veri
+        self.assertEqual(rec["payout_total"] + rec["house_total"], rec["T"])
+
+    def test_una_sola_settle_user_per_utente(self):
+        """La seconda liquidazione fu un no-op: deve restare tale."""
+        settles = [e for e in self.entries if e["kind"] == c.KIND_SETTLE_USER]
+        self.assertEqual(len(settles), 2)
+        self.assertEqual(len({e["user_id"] for e in settles}), 2)
+        # anche il perdente ha la sua entry, altrimenti at_risk non torna a zero
+        perdente = next(e for e in settles if e["amount"] == 0)
+        self.assertEqual(perdente["meta"]["stake"], 3000)
+
+    def test_conservazione_globale(self):
+        credited = sum(e["amount"] for e in self.entries if e["kind"] == c.KIND_CREDIT)
+        held = sum(r["available"] + r["at_risk"] for r in self.balances.values())
+        house = sum(s["house_total"] for s in self.settled.values())
+        self.assertEqual(credited, 20000)
+        self.assertEqual(held + house, credited)
+        self.assertTrue(all(r["at_risk"] == 0 for r in self.balances.values()))
+
+    def test_le_bet_ostili_non_sono_nel_ledger(self):
+        applicate = {e["id"] for e in self.entries if e["kind"] == c.KIND_BET_DEBIT}
+        self.assertEqual(applicate, {"u_03b325ba-1", "u_1b676e26-1"})
+        # la firma forgiata e la sonda hanno una ricevuta, ma nessuna entry
+        self.assertEqual(self.receipts["u_1b676e26-2"]["code"], c.ERR_SIG)
+        self.assertEqual(self.receipts["u_03b325ba-99"]["code"], c.ERR_EVENT_MISSING)
+        for bet_id in ("u_1b676e26-2", "u_03b325ba-99"):
+            self.assertNotIn(bet_id, applicate)
+
+    def test_la_consegna_doppia_risulta_applicata_una_volta_sola(self):
+        """La copia identica della issue #5: DUP, e una sola BET_DEBIT."""
+        self.assertEqual(self.receipts["u_03b325ba-1"]["code"], c.DUP)
+        self.assertEqual(self.receipts["u_03b325ba-1"]["status"], "APPLIED")
+        debiti = [e for e in self.entries
+                  if e["kind"] == c.KIND_BET_DEBIT and e["id"] == "u_03b325ba-1"]
+        self.assertEqual(len(debiti), 1)
+        self.assertEqual(debiti[0]["amount"], 3000)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

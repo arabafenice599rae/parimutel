@@ -39,6 +39,8 @@ custodisce denaro reale: i saldi sono punti interni.
 | `register.py` | provisioning utente (id + segreto + config) |
 | `rebuild_balances.py` | ricostruzione e verifica dal solo ledger (recovery/dispute) |
 | `stress_test.py` | molti scrittori concorrenti contro lo stesso repo |
+| `verify_state.py` | verifica profonda di uno stato: la definizione di "arena sana" |
+| `acceptance_test.py` | test di accettazione su GitHub vero (issue, drain, payout) |
 
 `drain.py` e `place_bet.py` **non** hanno regole proprie: chiamano entrambi
 `common.validate_and_apply`. Cambiare canale d'ingresso non cambia il denaro.
@@ -65,7 +67,8 @@ Un'implementazione e' conforme se e solo se le preserva tutte.
 Verifica in qualunque momento:
 
 ```bash
-python3 scripts/rebuild_balances.py        # exit 1 se qualcosa non torna
+python3 scripts/verify_state.py            # exit 1 se qualcosa non torna
+python3 scripts/rebuild_balances.py        # solo catena + saldi (recovery)
 python3 -m unittest discover -s tests -v   # 52 test di conformita'
 ./scripts/test_smoke.sh                    # end-to-end su arena temporanea
 python3 scripts/stress_test.py             # 5 scrittori simultanei + crash
@@ -158,6 +161,36 @@ Poi ricontrolla tutto da un clone pulito:
 
 Misura tipica (100 utenti, 800 bet, 12 runner, 30% di crash): ~176 run di drain,
 ~52 crash, ~77 conflitti di push, zero violazioni.
+
+### Test di accettazione su GitHub vero
+
+Lo stress test prova la **logica** contro un bare repo locale. L'accettazione
+prova l'**integrazione**: issue vere, drain veri, runner veri.
+
+```bash
+export GITHUB_TOKEN=<pat con issues:write>
+export ARENA_SECRETS_FILE=~/.arena/test-secrets.json
+
+python3 scripts/acceptance_test.py --repo owner/arena --plan    # cosa cliccare
+python3 scripts/acceptance_test.py --repo owner/arena --bets    # apre le issue
+python3 scripts/acceptance_test.py --repo owner/arena --verify  # verifica
+```
+
+Le fasi sono separate perche' due passaggi richiedono un umano: `create_event`,
+`credit` e `settle` passano da `workflow_dispatch`, che un token
+d'integrazione non puo' innescare. Lo script dice esattamente cosa cliccare.
+
+I payout vengono **ricalcolati in modo indipendente** dalla formula della spec,
+non chiamando `settle.compute_settlement`: verificare il codice con se stesso
+non proverebbe niente.
+
+### La prima prova reale e' diventata un test
+
+`tests/fixtures/prova-reale/` contiene il ledger prodotto dal primo giro
+end-to-end vero su GitHub Actions: due bet applicate, una firma forgiata
+respinta, una consegna doppia, un settlement e un secondo settlement no-op.
+`TestFixtureProvaReale` lo rigioca a ogni CI. E' l'unico test della suite i cui
+dati non sono inventati.
 
 ### Il test ha i denti
 
