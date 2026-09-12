@@ -457,6 +457,82 @@ def conferma(domanda: str) -> bool:
     return risposta in ("s", "si", "sì", "y", "yes")
 
 
+def chiedi_intero(etichetta: str, default=None, minimo=None, massimo=None) -> str:
+    """Come chiedi(), ma non lascia passare qualcosa che non e' un numero.
+
+    Senza questo un refuso faceva esplodere la console con un ValueError a
+    meta' del questionario, buttando via tutte le risposte gia' date.
+    """
+    while True:
+        valore = chiedi(etichetta, default)
+        try:
+            numero = int(valore)
+        except ValueError:
+            print(f"  '{valore}' non e' un numero intero")
+            continue
+        if minimo is not None and numero < minimo:
+            print(f"  deve essere almeno {minimo}")
+            continue
+        if massimo is not None and numero > massimo:
+            print(f"  deve essere al massimo {massimo}")
+            continue
+        return str(numero)
+
+
+def normalizza_istante(valore: str):
+    """Accetta le forme che un umano scrive davvero, e ritorna l'ISO completo.
+
+    Da telefono "2026-09-22" e' la risposta naturale alla domanda "quando
+    chiude". Farla passare silenziosamente come mezzanotte UTC sarebbe una
+    trappola; rifiutarla e basta, scortesia. Si espande e si mostra.
+    """
+    testo = valore.strip().replace("/", "-")
+    for formato, espansione in (
+        ("%Y-%m-%dT%H:%M:%SZ", "{}"),
+        ("%Y-%m-%dT%H:%M:%S", "{}Z"),
+        ("%Y-%m-%d %H:%M:%S", "{}Z"),
+        ("%Y-%m-%dT%H:%M", "{}:00Z"),
+        ("%Y-%m-%d %H:%M", "{}:00Z"),
+        ("%Y-%m-%d", "{}T00:00:00Z"),
+    ):
+        try:
+            datetime.strptime(testo, formato)
+        except ValueError:
+            continue
+        completo = espansione.format(testo.replace(" ", "T"))
+        return completo, formato == "%Y-%m-%d"
+    return None, False
+
+
+def chiedi_istante(etichetta: str) -> str:
+    while True:
+        valore = chiedi(etichetta)
+        completo, solo_data = normalizza_istante(valore)
+        if completo is None:
+            print("  formato non riconosciuto: usa 2026-09-20T18:00:00Z "
+                  "(oppure 2026-09-20 18:00)")
+            continue
+        if datetime.strptime(completo, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+            print(f"  {completo} e' gia' passato")
+            continue
+        if solo_data:
+            print(f"  senza orario vale la mezzanotte UTC: {completo}")
+        elif completo != valore.strip():
+            print(f"  interpretato come {completo}")
+        return completo
+
+
+def serve_token(cfg) -> bool:
+    """Il token va chiesto PRIMA del questionario, non dopo otto domande."""
+    if cfg.get("token"):
+        return True
+    print("\n  Questa operazione scrive, quindi serve un token con")
+    print("  'Actions: Read and write' su questo repo.")
+    print("  Aggiungilo con: python3 arena_admin.py setup --force")
+    return False
+
+
 def chiedi(etichetta: str, default=None, obbligatorio=True) -> str:
     suffisso = f" [{default}]" if default else ""
     while True:
@@ -467,15 +543,49 @@ def chiedi(etichetta: str, default=None, obbligatorio=True) -> str:
         print("  serve un valore")
 
 
+def eventi_per_stato(cache: Path, comune, stato=None):
+    """Gli id degli eventi, eventualmente filtrati per stato."""
+    eventi = leggi(cache, "events.json", comune).get("events", {})
+    adesso = comune.now_iso()
+    fuori = []
+    for ev in eventi.values():
+        if ev["state"] == "SETTLED":
+            corrente = "SETTLED"
+        elif adesso >= ev["close_at"]:
+            corrente = "CHIUSO"
+        else:
+            corrente = "APERTO"
+        if stato is None or stato == corrente:
+            if not (stato is None and corrente == "SETTLED"):
+                fuori.append(ev["id"])
+    return sorted(fuori)
+
+
+def chiedi_fra(etichetta: str, ammessi) -> str:
+    """Non accetta una risposta che non e' nell'elenco.
+
+    Digitare '8' quando la domanda vuole un event_id capita: meglio dirlo
+    subito, con le opzioni sotto gli occhi, che scoprirlo dal fallimento del
+    workflow qualche minuto dopo.
+    """
+    while True:
+        valore = chiedi(etichetta).strip()
+        if valore in ammessi:
+            return valore
+        print(f"  '{valore}' non e' fra: {', '.join(ammessi)}")
+
+
 def azione_crea_evento(cfg):
+    if not serve_token(cfg):
+        return
     event_id = chiedi("event_id (es. ev_derby)")
     titolo = chiedi("titolo")
-    close_at = chiedi("chiusura UTC (2026-09-20T18:00:00Z)")
+    close_at = chiedi_istante("chiusura UTC (2026-09-20T18:00:00Z)")
     yes_label = chiedi("etichetta lato YES", "Yes")
     no_label = chiedi("etichetta lato NO", "No")
-    takeout = chiedi("takeout in bps (300 = 3%)", "300")
-    min_bet = chiedi("puntata minima", "100")
-    max_bet = chiedi("puntata massima", "1000000")
+    takeout = chiedi_intero("takeout in bps (300 = 3%)", "300", 0, 9999)
+    min_bet = chiedi_intero("puntata minima", "100", 1)
+    max_bet = chiedi_intero("puntata massima", "1000000", int(min_bet))
     print(f"  {event_id}: \"{titolo}\"  chiude {close_at}")
     print(f"  takeout {int(takeout) / 100:.2f}%   limiti [{min_bet}, {max_bet}]")
     if conferma("Creo l'evento?"):
@@ -486,9 +596,11 @@ def azione_crea_evento(cfg):
 
 
 def azione_accredita(cfg, cache, comune):
+    if not serve_token(cfg):
+        return
     vista_utenti(cache, comune)
     user_id = chiedi("\nuser_id destinatario")
-    importo = chiedi("punti (negativo = rettifica)")
+    importo = chiedi_intero("punti (negativo = rettifica)")
     motivo = chiedi("nota operativa", obbligatorio=False)
     saldi, _, _ = comune.reduce_balances(comune.read_ledger(cache / "ledger"))
     attuale = saldi.get(user_id, {}).get("available", 0)
@@ -500,20 +612,30 @@ def azione_accredita(cfg, cache, comune):
 
 
 def azione_chiudi(cfg, cache, comune):
+    if not serve_token(cfg):
+        return
+    aperti = eventi_per_stato(cache, comune, "APERTO")
+    if not aperti:
+        print("\n  Nessun evento aperto da chiudere.")
+        return
     vista_eventi(cache, comune, solo="APERTO")
-    event_id = chiedi("\nevent_id da chiudere subito")
+    event_id = chiedi_fra("\nevent_id da chiudere subito", aperti)
     print("  Le bet successive prenderanno ERR_EVENT_CLOSED.")
     if conferma("Chiudo la finestra?"):
         dispatch(cfg, "close_event.yml", {"event_id": event_id})
 
 
 def azione_liquida(cfg, cache, comune, liquida):
-    vista_eventi(cache, comune)
-    event_id = chiedi("\nevent_id da liquidare")
-    esito = chiedi("esito (yes / no / void)")
-    if esito not in ("yes", "no", "void"):
-        print("  esito non valido")
+    if not serve_token(cfg):
         return
+    liquidabili = [e for e in eventi_per_stato(cache, comune)
+                   if not e.startswith("#")]
+    if not liquidabili:
+        print("\n  Nessun evento da liquidare.")
+        return
+    vista_eventi(cache, comune)
+    event_id = chiedi_fra("\nevent_id da liquidare", liquidabili)
+    esito = chiedi_fra("esito (yes / no / void)", ["yes", "no", "void"])
     if anteprima_settlement(cache, comune, liquida, event_id, esito) is None:
         return
     eventi = leggi(cache, "events.json", comune).get("events", {})
@@ -579,6 +701,12 @@ def azione_setup(args):
         print("\nPronto: python3 arena_admin.py")
         return 0
     repo = args.repo or chiedi("repo (owner/nome)")
+    while repo.count("/") != 1 or not all(repo.split("/")):
+        # "u_03b325ba" alla domanda "repo" e' un errore facile: senza questo
+        # controllo si scopriva solo da un 404 su un repo inesistente.
+        print(f"  '{repo}' non e' un repo: serve la forma owner/nome, "
+              "tipo arabafenice599rae/parimutel")
+        repo = chiedi("repo (owner/nome)")
     branch = args.branch or "main"
     token = args.token if args.token is not None else chiedi(
         "token con Actions+Contents (invio per sola lettura)", obbligatorio=False)
@@ -683,6 +811,9 @@ def menu(cfg, cache, comune, liquida, verifica_stato):
                 print("  scelta non valida")
         except SystemExit as exc:
             print(f"  {exc}")
+        except (ValueError, KeyError) as exc:
+            # Un refuso non deve chiudere il pannello e far ricominciare tutto.
+            print(f"  dato non valido: {exc}")
         except (EOFError, KeyboardInterrupt):
             return 0
 

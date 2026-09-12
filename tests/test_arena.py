@@ -1277,6 +1277,36 @@ class TestConsoleAdmin(unittest.TestCase):
                     self.admin.importa_moduli(None)
         self.assertIn("--force", str(ctx.exception))
 
+    def test_normalizza_le_date_che_un_umano_scrive(self):
+        """Da telefono '2026-09-22' e' la risposta naturale a "quando chiude"."""
+        casi = {
+            "2026-09-22": ("2026-09-22T00:00:00Z", True),
+            "2026-09-22 18:30": ("2026-09-22T18:30:00Z", False),
+            "2026-09-22T18:30": ("2026-09-22T18:30:00Z", False),
+            "2026-09-20T18:00:00Z": ("2026-09-20T18:00:00Z", False),
+            "2026/09/20 18:00": ("2026-09-20T18:00:00Z", False),
+        }
+        for scritto, (atteso, solo_data) in casi.items():
+            self.assertEqual(self.admin.normalizza_istante(scritto),
+                             (atteso, solo_data), scritto)
+        for spazzatura in ("domani", "22-09-2026", "", "8"):
+            self.assertEqual(self.admin.normalizza_istante(spazzatura)[0], None,
+                             spazzatura)
+
+    def test_le_scritture_chiedono_il_token_per_prima_cosa(self):
+        """Chiederlo dopo otto domande butta via tutte le risposte."""
+        self.assertFalse(self.admin.serve_token({"repo": "owner/arena"}))
+        self.assertTrue(self.admin.serve_token({"repo": "owner/arena",
+                                                "token": "ghp_x"}))
+
+    def test_eventi_per_stato_esclude_i_gia_liquidati(self):
+        cache = self.tmp / "cache"
+        self.assertEqual(self.admin.eventi_per_stato(cache, c, "APERTO"), [])
+        # ev_prova e' SETTLED: non e' piu' liquidabile
+        self.assertEqual(self.admin.eventi_per_stato(cache, c), [])
+        self.assertEqual(self.admin.eventi_per_stato(cache, c, "SETTLED"),
+                         ["ev_prova"])
+
     def test_le_viste_non_esplodono(self):
         for comando in ("eventi", "utenti", "conti", "ledger", "settlement"):
             proc = self.esegui(comando)
