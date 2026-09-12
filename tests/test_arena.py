@@ -1224,6 +1224,21 @@ class TestConsoleAdmin(unittest.TestCase):
         proc = self.esegui("anteprima", "ev_prova", "void")
         self.assertIn("RIMBORSO TOTALE", proc.stdout)
 
+    def test_setup_rilanciato_tiene_il_config(self):
+        """Il caso comune: rilanciare setup dopo un aggiornamento.
+
+        Rifiutarsi di fare qualunque cosa, lasciando i moduli vecchi, era il
+        comportamento sbagliato: e' successo al primo uso vero.
+        """
+        prima = (self.tmp / "admin.json").read_text(encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena_admin.py"), "setup"],
+            capture_output=True, text=True, env=os.environ.copy(), timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("lo tengo", proc.stdout)
+        self.assertEqual((self.tmp / "admin.json").read_text(encoding="utf-8"), prima)
+
     def test_le_viste_non_esplodono(self):
         for comando in ("eventi", "utenti", "conti", "ledger", "settlement"):
             proc = self.esegui(comando)

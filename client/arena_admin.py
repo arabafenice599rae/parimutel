@@ -530,10 +530,29 @@ def sembra_un_token(valore: str) -> bool:
     return len(valore) >= 36 and all(ch.isalnum() or ch in "_-" for ch in valore)
 
 
+def scarica_moduli(cfg):
+    """Porta accanto alla console il motore contabile del progetto."""
+    qui = Path(__file__).resolve().parent
+    print("scarico i moduli del progetto (il motore contabile, non una copia):")
+    for modulo in MODULI:
+        scarica_file(cfg, f"scripts/{modulo}", qui / modulo)
+        print(f"  {modulo}")
+
+
 def azione_setup(args):
     percorso = config_path()
     if percorso.exists() and not args.force:
-        raise SystemExit(f"{percorso} esiste gia' (usa --force)")
+        # Rilanciare `setup` dopo un aggiornamento e' il caso piu' comune:
+        # rifiutarsi di fare qualunque cosa, e lasciare i moduli vecchi, e'
+        # il comportamento sbagliato. Si tiene il config e si rinfresca.
+        cfg = carica_config()
+        print(f"config gia' presente in {percorso}: lo tengo "
+              f"(--force per rifarlo)")
+        print(f"  repo: {cfg['repo']}  branch: {cfg['branch']}  "
+              f"token: {'si' if cfg.get('token') else 'no (sola lettura)'}")
+        scarica_moduli(cfg)
+        print("\nPronto: python3 arena_admin.py")
+        return 0
     repo = args.repo or chiedi("repo (owner/nome)")
     branch = args.branch or "main"
     token = args.token if args.token is not None else chiedi(
@@ -559,12 +578,24 @@ def azione_setup(args):
     else:
         print("  Senza token: sola lettura. Le scritture chiederanno un token.")
 
-    qui = Path(__file__).resolve().parent
-    print("scarico i moduli del progetto (il motore contabile, non una copia):")
-    for modulo in MODULI:
-        scarica_file(cfg, f"scripts/{modulo}", qui / modulo)
-        print(f"  {modulo}")
+    scarica_moduli(cfg)
     print("\nPronto: python3 arena_admin.py")
+    return 0
+
+
+def azione_aggiorna(cfg):
+    """Riscarica console e moduli.
+
+    Passa dall'API dei contenuti, non da `raw.githubusercontent.com`: quello
+    sta dietro una CDN che serve il file vecchio fino a qualche minuto dopo un
+    merge, e su un telefono e' difficile accorgersene.
+    """
+    qui = Path(__file__).resolve().parent
+    mio_nome = Path(__file__).name
+    scarica_file(cfg, "client/arena_admin.py", qui / mio_nome)
+    print(f"aggiornata {mio_nome}")
+    scarica_moduli(cfg)
+    print("\nRilancia: python3 arena_admin.py")
     return 0
 
 
@@ -654,8 +685,8 @@ def vista_contabilita(cache: Path, comune):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Console amministrativa dell'Arena")
     ap.add_argument("comando", nargs="?", default="menu",
-                    choices=["menu", "setup", "dashboard", "eventi", "utenti",
-                             "utente", "conti", "ledger", "settlement",
+                    choices=["menu", "setup", "aggiorna", "dashboard", "eventi",
+                             "utenti", "utente", "conti", "ledger", "settlement",
                              "verifica", "anteprima"])
     ap.add_argument("argomento", nargs="?", help="user_id o event_id")
     ap.add_argument("esito", nargs="?", help="per anteprima: yes/no/void")
@@ -670,6 +701,8 @@ def main(argv=None) -> int:
         return azione_setup(args)
 
     cfg = carica_config()
+    if args.comando == "aggiorna":
+        return azione_aggiorna(cfg)
     comune, liquida, verifica_stato = importa_moduli()
     cache = cache_dir() if args.offline else aggiorna_stato(cfg, silenzioso=True)
     if not (cache / "ledger").exists():

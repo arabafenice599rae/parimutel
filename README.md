@@ -281,8 +281,17 @@ lettura — e il client lo tiene in conto quando sceglie dove salvare. Scrivere 
 esadecimali, su una tastiera da telefono, e' il modo migliore per sbagliare un
 carattere e non capire perche' ogni bet prende `ERR_SIG`.
 
-Per aggiornare il client basta rilanciare il `curl`: e' un file solo, senza
-dipendenze fuori dalla stdlib.
+Per aggiornare:
+
+```bash
+python3 arena.py aggiorna
+```
+
+Non rilanciare il `curl`: `raw.githubusercontent.com` sta dietro una CDN che
+serve il file vecchio fino a qualche minuto dopo un aggiornamento, e da
+telefono e' difficile accorgersene (si vede solo confrontando i byte).
+`aggiorna` passa dall'API dei contenuti, che risponde sempre con la versione
+corrente.
 
 ### Token
 
@@ -365,7 +374,11 @@ cd ~/Documents
 curl -O https://raw.githubusercontent.com/<owner>/<arena>/main/client/arena_admin.py
 python3 arena_admin.py setup     # config + scarica i moduli del progetto
 python3 arena_admin.py           # menu
+python3 arena_admin.py aggiorna  # riscarica console e moduli
 ```
+
+Rilanciare `setup` quando il config esiste gia' non lo sovrascrive: tiene
+quello e rinfresca i moduli (`--force` per rifarlo da capo).
 
 ```
 ╔══════════════════════════════════════╗

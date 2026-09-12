@@ -499,6 +499,34 @@ def cmd_init(cfg, args):
     return 0
 
 
+def cmd_aggiorna(cfg, args):
+    """Riscarica arena.py dal repo.
+
+    Passa dall'API dei contenuti invece che da `raw.githubusercontent.com`:
+    quest'ultimo sta dietro una CDN che serve il file vecchio fino a qualche
+    minuto dopo un aggiornamento, e da telefono e' difficile accorgersene.
+    """
+    query = urllib.parse.urlencode({"ref": cfg["branch"]})
+    url = f"{API}/repos/{cfg['repo']}/contents/client/arena.py?{query}"
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/vnd.github.raw+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    req.add_header("User-Agent", "arena-client")
+    req.add_header("Cache-Control", "no-cache")
+    if cfg.get("token"):
+        req.add_header("Authorization", f"Bearer {cfg['token']}")
+    nuovo = _open(req)
+
+    mio = Path(__file__).resolve()
+    vecchio = mio.read_text(encoding="utf-8")
+    if nuovo == vecchio:
+        print("gia' aggiornato")
+        return 0
+    mio.write_text(nuovo, encoding="utf-8")
+    print(f"aggiornato {mio.name} ({len(vecchio)} -> {len(nuovo)} byte)")
+    return 0
+
+
 def cmd_receipt(cfg, args):
     return show_receipt(args.bet_id, poll_receipt(cfg, args.bet_id, args.timeout))
 
@@ -535,6 +563,9 @@ def main(argv=None) -> int:
     p.add_argument("bet_id")
     p.add_argument("--timeout", type=int, default=0)
     p.set_defaults(func=cmd_receipt)
+
+    p = sub.add_parser("aggiorna", help="riscarica arena.py dal repo")
+    p.set_defaults(func=cmd_aggiorna)
 
     p = sub.add_parser("init", help="crea il config.json (prima installazione)")
     p.add_argument("--user-id")
