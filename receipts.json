@@ -1,10 +1,31 @@
 {
   "receipts": {
+    "u_03b325ba-1": {
+      "available": 7000,
+      "code": "DUP",
+      "reason": "bet gia' applicata",
+      "seq": 3,
+      "status": "APPLIED",
+      "ts": "2026-09-12T17:40:01Z"
+    },
     "u_03b325ba-99": {
       "code": "ERR_EVENT_MISSING",
       "reason": "evento sconosciuto: ev_prova",
       "status": "REJECTED",
       "ts": "2026-09-12T17:33:15Z"
+    },
+    "u_1b676e26-1": {
+      "available": 8000,
+      "code": "OK_APPLIED",
+      "seq": 4,
+      "status": "APPLIED",
+      "ts": "2026-09-12T17:40:01Z"
+    },
+    "u_1b676e26-2": {
+      "code": "ERR_SIG",
+      "reason": "firma non valida",
+      "status": "REJECTED",
+      "ts": "2026-09-12T17:40:01Z"
     }
   },
   "version": 1

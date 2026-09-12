@@ -2,8 +2,8 @@
   "events": {
     "ev_prova": {
       "bet_count": {
-        "no": 0,
-        "yes": 0
+        "no": 1,
+        "yes": 1
       },
       "close_at": "2026-09-12T23:00:00Z",
       "currency": "PTS",
@@ -13,8 +13,8 @@
       "open_at": "2026-09-12T17:36:38Z",
       "outcome": null,
       "pool": {
-        "no": 0,
-        "yes": 0
+        "no": 2000,
+        "yes": 3000
       },
       "resolved_at": null,
       "settled_at": null,
