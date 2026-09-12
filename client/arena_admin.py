@@ -520,6 +520,16 @@ def azione_liquida(cfg, cache, comune, liquida):
 # Setup e menu
 # --------------------------------------------------------------------------
 
+def sembra_un_token(valore: str) -> bool:
+    """Scarta le sciocchezze evidenti (su a-Shell l'output di un comando
+    precedente finisce facilmente dentro il prompt). Non valida il token:
+    quello lo puo' fare solo GitHub."""
+    valore = valore.strip()
+    if valore.startswith(("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")):
+        return True
+    return len(valore) >= 36 and all(ch.isalnum() or ch in "_-" for ch in valore)
+
+
 def azione_setup(args):
     percorso = config_path()
     if percorso.exists() and not args.force:
@@ -528,6 +538,10 @@ def azione_setup(args):
     branch = args.branch or "main"
     token = args.token if args.token is not None else chiedi(
         "token con Actions+Contents (invio per sola lettura)", obbligatorio=False)
+    if token and not sembra_un_token(token):
+        print(f"  '{token[:16]}' non sembra un token GitHub: lo ignoro.")
+        print("  Aggiungilo poi con: python3 arena_admin.py setup --force")
+        token = ""
     cfg = {"repo": repo, "branch": branch}
     if token:
         cfg["token"] = token
@@ -539,6 +553,11 @@ def azione_setup(args):
     except OSError:
         pass
     print(f"scritto {percorso}")
+    if token:
+        print("  ATTENZIONE: questo token puo' lanciare i workflow, quindi\n"
+              "  accreditare e liquidare. Non va sul telefono di un utente.")
+    else:
+        print("  Senza token: sola lettura. Le scritture chiederanno un token.")
 
     qui = Path(__file__).resolve().parent
     print("scarico i moduli del progetto (il motore contabile, non una copia):")
