@@ -38,6 +38,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y age
 
       - name: Svuota la coda
+        # Nessun `|| true`: le bet rifiutate sono gia' un esito normale del
+        # lotto (exit 0, ricevute scritte). Un exit diverso da 0 e' un problema
+        # vero — conflitto di push persistente (11) o guasto (1/2) — e il run
+        # deve diventare rosso. Le issue restano aperte e il cron ci riprova.
         run: |
           python3 scripts/drain.py \
             --limit "${{ github.event.inputs.limit || 200 }}" \

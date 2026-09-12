@@ -31,9 +31,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y age
 
       - name: Applica la bet
-        # La bet rifiutata non e' un errore di infrastruttura: la ricevuta e'
-        # gia' in receipts.json, quindi il run resta verde.
-        run: python3 scripts/place_bet.py --commit || true
+        # Solo il codice 10 (bet RIFIUTATA dalla validazione) vale come
+        # successo del run: la ricevuta e' in receipts.json e l'infrastruttura
+        # ha funzionato. Qualunque altro codice -> run rosso, perche' un bug di
+        # git, filesystem o configurazione non deve passare inosservato.
+        run: |
+          set -uo pipefail
+          python3 scripts/place_bet.py --commit && status=0 || status=$?
+          case "$status" in
+            0)  echo "bet applicata" ;;
+            10) echo "::notice::bet rifiutata dalla validazione: la ricevuta e' in receipts.json" ;;
+            11) echo "::error::push rifiutato da uno scrittore concorrente: rilanciare il run"; exit 1 ;;
+            *)  echo "::error::errore di infrastruttura (exit $status)"; exit "$status" ;;
+          esac
 
       - name: Verifica le invarianti
         run: python3 scripts/rebuild_balances.py

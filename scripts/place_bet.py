@@ -9,7 +9,14 @@ la stessa pipeline di validazione — qui non vive nessuna regola propria.
     python3 scripts/place_bet.py --file bet.json
     BET_JSON='{"bet_id":...}' python3 scripts/place_bet.py
 
-Exit code: 0 se la bet e' stata applicata (o era un duplicato), 1 se rifiutata.
+Exit code (contano: un guasto non deve mai travestirsi da rifiuto):
+
+    0   applicata, oppure duplicato (I6)
+    10  RIFIUTATA dalla validazione — la ricevuta e' scritta, tutto ha funzionato
+    11  push rifiutato: un altro scrittore e' passato davanti, rilanciare il run
+    1   errore di infrastruttura (git, filesystem, bug)
+    2   invocazione o configurazione sbagliata
+
 La ricevuta finisce sempre in `receipts.json` — e' li' che guarda il client.
 """
 
@@ -84,15 +91,16 @@ def main(argv=None) -> int:
         bet = parse_bet(raw)
     except (ValueError, json.JSONDecodeError) as exc:
         # Payload illeggibile: nessun bet_id affidabile su cui scrivere una
-        # ricevuta, quindi resta solo il log del run.
+        # ricevuta, quindi resta solo il log del run. E' comunque un rifiuto,
+        # non un guasto.
         c.eprint(f"REJECTED {c.ERR_MALFORMED}: {exc}")
-        return 1
+        return c.EXIT_REJECTED
 
     try:
         secrets = c.load_user_secrets()
     except c.SecretsError as exc:
         c.eprint(f"errore di configurazione: {exc}")
-        return 2
+        return c.EXIT_USAGE
 
     res = c.validate_and_apply(bet, ws, secrets)
     paths = ws.flush()
@@ -100,9 +108,13 @@ def main(argv=None) -> int:
 
     if args.commit:
         subject = f"bet {res.bet_id or '<malformed>'}: {res.code}"
-        c.commit_and_push(paths, subject, push=not args.no_push)
+        # Un conflitto vince sull'esito della bet: se il commit non e' salito,
+        # la bet non e' stata applicata per nessuno.
+        code = c.commit_and_push_cli(paths, subject, push=not args.no_push)
+        if code != c.EXIT_OK:
+            return code
 
-    return 0 if res.ok else 1
+    return c.EXIT_OK if res.ok else c.EXIT_REJECTED
 
 
 if __name__ == "__main__":

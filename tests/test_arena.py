@@ -342,7 +342,7 @@ class TestValidationPipeline(ArenaCase):
         self.place(self.make_bet("u_a", "ev1", "yes", 100, 5), expect=0)
         # bet_id nuovo ma nonce vecchio: non e' un duplicato, e' un replay
         bet = self.make_bet("u_a", "ev1", "yes", 100, 3)
-        self.place(bet, expect=1)
+        self.place(bet, expect=c.EXIT_REJECTED)
         self.assertEqual(self.receipts()["u_a-3"]["code"], c.ERR_NONCE)
         self.assertEqual(self.receipts()["u_a-3"]["status"], "REJECTED")
         self.assertEqual(self.balances()["u_a"]["last_nonce"], 5)
@@ -798,6 +798,33 @@ class TestClient(ArenaCase):
         pool = {"yes": 300, "no": 700}
         self.assertAlmostEqual(client.multiplier(pool, "yes", 300),
                                c.implied_multiplier(pool, "yes", 300))
+
+
+# ==========================================================================
+class TestConcurrency(unittest.TestCase):
+    """Profilo minimo dello stress test (§stress): gira in CI a ogni push.
+
+    I profili grandi si lanciano a mano:
+        python3 scripts/stress_test.py --users 50 --bets 6 --runners 8
+    """
+
+    def test_concurrent_writers_preserve_every_invariant(self):
+        workdir = Path(tempfile.mkdtemp(prefix="arena-ci-stress-"))
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "stress_test.py"),
+                 "--users", "5", "--bets", "2", "--runners", "3",
+                 "--rounds", "5", "--crash-rate", "0.25",
+                 "--workdir", str(workdir)],
+                capture_output=True, text=True, timeout=600,
+            )
+            self.assertEqual(
+                proc.returncode, 0,
+                f"lo stress test ha trovato violazioni:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertIn("NESSUNA VIOLAZIONE", proc.stdout)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

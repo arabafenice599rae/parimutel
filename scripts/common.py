@@ -58,6 +58,16 @@ ERR_BALANCE = "ERR_BALANCE"
 
 SUCCESS_CODES = (OK_APPLIED, DUP)
 
+# Codici di uscita degli script. La distinzione che conta per un sistema
+# contabile: una bet RIFIUTATA e' un esito normale (la ricevuta e' scritta,
+# l'infrastruttura ha funzionato), un errore di infrastruttura NO. Mescolare i
+# due dietro un `|| true` nasconde i bug veri.
+EXIT_OK = 0          # lavoro svolto (applicata, duplicata, coda vuota)
+EXIT_ERROR = 1       # errore di infrastruttura: git, filesystem, rete, bug
+EXIT_USAGE = 2       # invocazione o configurazione sbagliata
+EXIT_REJECTED = 10   # bet rifiutata dalla validazione: NON e' un guasto
+EXIT_CONFLICT = 11   # push rifiutato: un altro scrittore e' passato davanti
+
 BET_FIELDS = ("bet_id", "user_id", "event_id", "side", "amount", "nonce", "ts", "sig")
 STRING_BET_FIELDS = ("bet_id", "user_id", "event_id", "side", "ts", "sig")
 
@@ -834,6 +844,14 @@ def implied_multiplier(pool: dict, side: str, takeout_bps: int):
 # Git (il commit del run e' il confine atomico, §7.4)
 # --------------------------------------------------------------------------
 
+class PushRejected(RuntimeError):
+    """Il remoto e' avanzato: il lavoro va rifatto su un checkout aggiornato.
+
+    Non e' un guasto e non si risolve forzando: il commit locale descrive uno
+    stato che non esiste piu'. Si riparte da `origin` e si ricalcola tutto.
+    """
+
+
 def git(*args, cwd: Path = None, check=True):
     return subprocess.run(
         ["git", *args],
@@ -868,6 +886,13 @@ def commit_and_push(paths, message: str, cwd: Path = None, push: bool = True) ->
     if not push:
         return True
 
+    # Hook DI SOLO TEST: allarga la finestra fra commit e push per rendere
+    # deterministica la corsa fra scrittori. In produzione la variabile non
+    # esiste e questa riga non fa nulla.
+    test_delay = float(os.environ.get("ARENA_TEST_PUSH_DELAY", "0") or 0)
+    if test_delay:
+        time.sleep(test_delay)
+
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd).stdout.strip()
     delay = 2
     last = None
@@ -877,9 +902,10 @@ def commit_and_push(paths, message: str, cwd: Path = None, push: bool = True) ->
             return True
         last = (proc.stdout or "") + (proc.stderr or "")
         if "non-fast-forward" in last or "rejected" in last or "fetch first" in last:
-            raise RuntimeError(
+            raise PushRejected(
                 "push rifiutato (un altro scrittore e' passato davanti): "
-                "rilanciare il run, non forzare.\n" + last
+                "si rifa' il lavoro su un checkout aggiornato, non si forza.\n"
+                + last
             )
         if attempt == 4:
             break
@@ -887,6 +913,54 @@ def commit_and_push(paths, message: str, cwd: Path = None, push: bool = True) ->
         time.sleep(delay)
         delay *= 2
     raise RuntimeError(f"push fallito dopo 5 tentativi:\n{last}")
+
+
+def commit_and_push_cli(paths, message: str, push: bool = True) -> int:
+    """`commit_and_push` per gli script: traduce i guasti in codici di uscita.
+
+    Nessuno script deve trattare un conflitto di push come "fatto": il lavoro
+    non e' pubblicato, quindi per gli altri non e' mai successo.
+    """
+    try:
+        commit_and_push(paths, message, push=push)
+        return EXIT_OK
+    except PushRejected as exc:
+        eprint(f"CONFLITTO: {exc}")
+        return EXIT_CONFLICT
+    except (RuntimeError, OSError) as exc:
+        eprint(f"errore di infrastruttura durante il commit: {exc}")
+        return EXIT_ERROR
+
+
+def reset_to_remote(cwd: Path = None, branch: str = None) -> str:
+    """Riporta la working tree esattamente a `origin/<branch>`.
+
+    E' l'equivalente in-process del checkout pulito con cui GitHub Actions fa
+    partire ogni run: si usa SOLO dopo un push rifiutato, quando il commit
+    locale e' certamente non pubblicato e va buttato.
+    """
+    cwd = cwd or root()
+    branch = branch or git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd).stdout.strip()
+
+    # Il fetch passa dalla rete e puo' fallire per motivi transitori (hiccup,
+    # contesa sui ref lato server). Qui i tempi sono corti perche' siamo gia'
+    # dentro un run che ha perso una corsa: se non si recupera in fretta tanto
+    # vale lasciare il lavoro al prossimo run.
+    delay = 0.5
+    for attempt in range(4):
+        proc = git("fetch", "origin", branch, cwd=cwd, check=False)
+        if proc.returncode == 0:
+            break
+        if attempt == 3:
+            raise RuntimeError(
+                f"fetch di origin/{branch} fallito dopo 4 tentativi: "
+                + ((proc.stderr or proc.stdout or "").strip() or "senza messaggio")
+            )
+        time.sleep(delay)
+        delay *= 2
+    git("reset", "--hard", f"origin/{branch}", cwd=cwd)
+    git("clean", "-fd", "--", "ledger", cwd=cwd, check=False)
+    return git("rev-parse", "HEAD", cwd=cwd).stdout.strip()
 
 
 def eprint(*args):

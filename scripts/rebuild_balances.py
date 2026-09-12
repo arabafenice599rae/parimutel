@@ -127,10 +127,10 @@ def main(argv=None) -> int:
         c.save_json(c.balances_path(), doc)
         print("balances.json riscritto dal ledger")
         if args.commit:
-            c.commit_and_push(
+            return c.commit_and_push_cli(
                 ["balances.json"], "rebuild balances from ledger", push=not args.no_push
             )
-        return 0
+        return c.EXIT_OK
 
     return 0 if report["ok"] else 1
 

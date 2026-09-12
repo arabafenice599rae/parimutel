@@ -260,10 +260,10 @@ def main(argv=None) -> int:
 
     paths = ws.flush()
     if args.commit:
-        c.commit_and_push(
+        return c.commit_and_push_cli(
             paths, f"settle {event_id} -> {args.outcome}", push=not args.no_push
         )
-    return 0
+    return c.EXIT_OK
 
 
 if __name__ == "__main__":

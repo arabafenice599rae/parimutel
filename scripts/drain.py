@@ -8,6 +8,10 @@ funzione (`common.validate_and_apply`).
     python3 scripts/drain.py --commit                    # in Actions
     python3 scripts/drain.py --issues-file q.json --no-commit   # offline/test
 
+Exit code: 0 lotto processato (o coda vuota) — le bet rifiutate sono un esito
+normale e non rendono rosso il run; 11 conflitto di push persistente (le issue
+restano in coda); 1 errore di infrastruttura; 2 configurazione.
+
 Ordine critico (§7.3): PRIMA si committa ledger+ricevute, SOLO DOPO si toccano
 le issue. Le issue sono un effetto collaterale non critico: se la chiusura
 fallisce, il prossimo drain ri-processa quei `bet_id` e l'idempotenza (I6) li
@@ -17,6 +21,8 @@ rende no-op. Consegna at-least-once + apply idempotente = effetto once.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import sys
@@ -124,15 +130,39 @@ class GitHubQueue:
 
 
 class FileQueue:
-    """Coda su file: stesso contratto, nessuna rete. Usata dai test."""
+    """Coda su file: stesso contratto, nessuna rete. Usata dai test.
 
-    def __init__(self, path: Path, effects: Path = None):
+    Con `mutate=True` la chiusura viene scritta davvero nel file della coda,
+    sotto lock: serve allo stress test, dove piu' processi concorrenti devono
+    vedere la stessa coda che si svuota, esattamente come le Issue su GitHub.
+    """
+
+    def __init__(self, path: Path, effects: Path = None, mutate: bool = False):
         self.path = Path(path)
         self.effects_path = Path(effects) if effects else None
+        self.mutate = mutate
         self.effects = []
 
+    @contextlib.contextmanager
+    def _lock(self):
+        """Lock d'avviso su un file a parte: il JSON non si tronca mai a meta'."""
+        if not self.mutate:
+            yield
+            return
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        with open(lock_path, "a+") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+    def _read(self):
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
     def list_open(self, limit: int):
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        with self._lock():
+            data = self._read()
         issues = [
             {"number": int(i["number"]), "body": i.get("body") or ""}
             for i in data
@@ -146,6 +176,17 @@ class FileQueue:
 
     def label_and_close(self, number: int, label: str):
         self.effects.append({"op": "close", "number": number, "label": label})
+        if not self.mutate:
+            return
+        with self._lock():
+            data = self._read()
+            for issue in data:
+                if int(issue["number"]) == int(number):
+                    issue["state"] = "closed"
+                    issue["label"] = label
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
 
     def dump(self):
         if self.effects_path:
@@ -201,35 +242,16 @@ def drain(queue, ws: c.WorkingState, secrets: dict, limit: int):
     return processed
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Svuota la coda di Issue `bet`")
-    ap.add_argument("--limit", type=int, default=200, help="max issue per lotto")
-    ap.add_argument("--label", default=BET_LABEL)
-    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
-    ap.add_argument("--issues-file", help="coda da file JSON (offline/test)")
-    ap.add_argument("--effects-file", help="dove registrare gli effetti (con --issues-file)")
-    ap.add_argument("--commit", action="store_true", help="git commit + push")
-    ap.add_argument("--no-push", action="store_true", help="commit senza push")
-    ap.add_argument("--skip-issue-updates", action="store_true",
-                    help="non commentare/chiudere (le issue restano in coda)")
-    args = ap.parse_args(argv)
+def run_batch(queue, secrets, args):
+    """Un tentativo completo: stato fresco da disco, lotto, commit.
 
-    if args.issues_file:
-        queue = FileQueue(args.issues_file, args.effects_file)
-    else:
-        queue = GitHubQueue(args.repo, os.environ.get("GITHUB_TOKEN", ""), args.label)
-
+    Rilegge SEMPRE lo stato all'inizio: e' quello che rende ripetibile un
+    tentativo dopo un push rifiutato.
+    """
     ws = c.WorkingState()
-    try:
-        secrets = c.load_user_secrets()
-    except c.SecretsError as exc:
-        c.eprint(f"errore di configurazione: {exc}")
-        return 2
-
     processed = drain(queue, ws, secrets, args.limit)
     if not processed:
-        print("coda vuota, no-op")
-        return 0
+        return []
 
     applied = sum(1 for _, r in processed if r.applied)
     dups = sum(1 for _, r in processed if r.code == c.DUP)
@@ -239,7 +261,7 @@ def main(argv=None) -> int:
     print(f"lotto: {len(processed)} issue -> {applied} applicate, {dups} duplicate, "
           f"{rejected} rifiutate")
 
-    # --- 1) COMMIT: ledger, saldi, ricevute. Da qui l'effetto e' durevole. ---
+    # --- COMMIT: ledger, saldi, ricevute. Da qui l'effetto e' durevole. ---
     paths = ws.flush()
     if args.commit:
         c.commit_and_push(
@@ -247,21 +269,86 @@ def main(argv=None) -> int:
             f"drain: {applied} bet applicate, {dups} dup, {rejected} rifiutate",
             push=not args.no_push,
         )
+    return processed
 
-    # --- 2) SOLO ORA le issue: effetto collaterale, best effort. ---
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Svuota la coda di Issue `bet`")
+    ap.add_argument("--limit", type=int, default=200, help="max issue per lotto")
+    ap.add_argument("--label", default=BET_LABEL)
+    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
+    ap.add_argument("--issues-file", help="coda da file JSON (offline/test)")
+    ap.add_argument("--effects-file", help="dove registrare gli effetti (con --issues-file)")
+    ap.add_argument("--close-issues-in-file", action="store_true",
+                    help="con --issues-file: scrive davvero la chiusura nella coda")
+    ap.add_argument("--commit", action="store_true", help="git commit + push")
+    ap.add_argument("--no-push", action="store_true", help="commit senza push")
+    ap.add_argument("--skip-issue-updates", action="store_true",
+                    help="non commentare/chiudere (le issue restano in coda)")
+    ap.add_argument("--max-attempts", type=int, default=3,
+                    help="ritentativi dopo un push rifiutato (0 = nessuno)")
+    args = ap.parse_args(argv)
+
+    if args.issues_file:
+        queue = FileQueue(args.issues_file, args.effects_file,
+                          mutate=args.close_issues_in_file)
+    else:
+        queue = GitHubQueue(args.repo, os.environ.get("GITHUB_TOKEN", ""), args.label)
+
+    try:
+        secrets = c.load_user_secrets()
+    except c.SecretsError as exc:
+        c.eprint(f"errore di configurazione: {exc}")
+        return c.EXIT_USAGE
+
+    # Un push rifiutato significa che il remoto e' avanzato mentre calcolavamo:
+    # il lotto va RIFATTO da capo sullo stato nuovo, non riproposto. Chi ha
+    # vinto la corsa ha gia' applicato parte delle bet: al secondo giro quelle
+    # diventano DUP e le altre si applicano sopra i saldi aggiornati.
+    attempts = max(1, args.max_attempts)
+    processed = None
+    for attempt in range(1, attempts + 1):
+        try:
+            processed = run_batch(queue, secrets, args)
+            break
+        except c.PushRejected as exc:
+            c.eprint(f"tentativo {attempt}/{attempts}: {exc}")
+            if attempt == attempts:
+                c.eprint(
+                    "conflitto persistente: le issue restano aperte, "
+                    "il prossimo drain (cron) le riprende"
+                )
+                return c.EXIT_CONFLICT
+            try:
+                head = c.reset_to_remote()
+            except (RuntimeError, OSError) as exc:
+                c.eprint(f"impossibile riallinearsi a origin: {exc}")
+                return c.EXIT_ERROR
+            c.eprint(f"ricalcolo il lotto su HEAD aggiornato ({head[:8]})")
+        except (RuntimeError, OSError) as exc:
+            # Il commit non e' passato: NON si toccano le issue, cosi' restano
+            # in coda per il prossimo giro.
+            c.eprint(f"errore di infrastruttura: {exc}")
+            return c.EXIT_ERROR
+
+    if not processed:
+        print("coda vuota, no-op")
+        return c.EXIT_OK
+
+    # --- SOLO ORA le issue: effetto collaterale, best effort. ---
     if not args.skip_issue_updates:
         for issue, res in processed:
             number = issue["number"]
             try:
                 queue.comment(number, receipt_comment(res.bet_id, res.receipt))
                 queue.label_and_close(number, APPLIED_LABEL if res.ok else REJECTED_LABEL)
-            except RuntimeError as exc:
+            except (RuntimeError, OSError) as exc:
                 # Non e' un fallimento del drain: la ricevuta e' gia' committata
                 # e il prossimo giro richiudera' la issue (no-op idempotente).
                 c.eprint(f"avviso: aggiornamento issue #{number} fallito: {exc}")
     if isinstance(queue, FileQueue):
         queue.dump()
-    return 0
+    return c.EXIT_OK
 
 
 if __name__ == "__main__":

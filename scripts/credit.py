@@ -71,11 +71,11 @@ def main(argv=None) -> int:
     )
 
     if args.commit:
-        c.commit_and_push(
+        return c.commit_and_push_cli(
             paths, f"credit {args.user} {args.amount:+d} ({credit_id})",
             push=not args.no_push,
         )
-    return 0
+    return c.EXIT_OK
 
 
 if __name__ == "__main__":

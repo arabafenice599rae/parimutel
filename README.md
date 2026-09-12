@@ -24,6 +24,7 @@ custodisce denaro reale: i saldi sono punti interni.
 | `scripts/` | tutta la logica; gira solo dentro le Actions |
 | `client/arena.py` | client a-Shell (solo stdlib) |
 | `tests/`, `scripts/test_smoke.sh` | suite di conformita' I1–I10 e smoke end-to-end |
+| `scripts/stress_test.py` | stress test di concorrenza (scrittori simultanei, crash) |
 
 ### Script
 
@@ -37,6 +38,7 @@ custodisce denaro reale: i saldi sono punti interni.
 | `create_event.py` | apre un evento |
 | `register.py` | provisioning utente (id + segreto + config) |
 | `rebuild_balances.py` | ricostruzione e verifica dal solo ledger (recovery/dispute) |
+| `stress_test.py` | molti scrittori concorrenti contro lo stesso repo |
 
 `drain.py` e `place_bet.py` **non** hanno regole proprie: chiamano entrambi
 `common.validate_and_apply`. Cambiare canale d'ingresso non cambia il denaro.
@@ -64,9 +66,115 @@ Verifica in qualunque momento:
 
 ```bash
 python3 scripts/rebuild_balances.py        # exit 1 se qualcosa non torna
-python3 -m unittest discover -s tests -v   # 51 test di conformita'
+python3 -m unittest discover -s tests -v   # 52 test di conformita'
 ./scripts/test_smoke.sh                    # end-to-end su arena temporanea
+python3 scripts/stress_test.py             # 5 scrittori simultanei + crash
 ```
+
+---
+
+## Concorrenza: chi garantisce cosa
+
+**`git commit` non e' il confine atomico globale — lo e' `git push`.** Finche'
+il push non passa, il lavoro di un run non esiste per nessun altro. Da qui
+tutto il resto:
+
+```
+RUN A                      RUN B
+checkout HEAD X            checkout HEAD X
+calcola il lotto           calcola il lotto
+commit A                   commit B
+push A  ✓                  push B  ✗ non-fast-forward
+                           └─► fetch + reset --hard origin/main
+                               RICALCOLA il lotto sullo stato nuovo
+                               (le bet di A diventano DUP)
+                               push  ✓
+```
+
+Il commit di B non viene forzato e non viene riproposto: descrive uno stato che
+non esiste piu'. `drain.py` rilegge lo stato da zero e **rifa'** il lotto
+(`--max-attempts`, default 3); esaurite le prove esce con 11, le issue restano
+aperte e il cron riprende da li'.
+
+Tre livelli di difesa, in ordine di forza:
+
+1. **`concurrency: ledger-write`** — su GitHub i run sono in fila, la corsa non
+   avviene quasi mai.
+2. **Push non forzato** — se avviene, il perdente se ne accorge.
+3. **Idempotenza (I6) + nonce (I5)** — il perdente puo' rifare tutto senza
+   applicare niente due volte.
+
+Lo stress test toglie il primo livello di proposito e verifica che gli altri due
+bastino.
+
+### Codici di uscita
+
+Un guasto non deve mai travestirsi da rifiuto: in un sistema contabile e' la
+differenza fra "l'utente ha sbagliato" e "abbiamo un bug".
+
+| Codice | Significato | Il run deve... |
+|---:|---|---|
+| 0 | lavoro svolto (applicata, DUP, coda vuota) | passare |
+| 10 | bet **rifiutata** dalla validazione, ricevuta scritta | passare |
+| 11 | push rifiutato da uno scrittore concorrente | fallire e ripartire |
+| 1 | errore di infrastruttura (git, filesystem, bug) | fallire |
+| 2 | invocazione o configurazione sbagliata | fallire |
+
+Per questo nei workflow non c'e' nessun `|| true`: solo il 10 viene tradotto in
+successo, esplicitamente.
+
+---
+
+## Stress test di concorrenza
+
+```bash
+python3 scripts/stress_test.py                                  # profilo veloce
+python3 scripts/stress_test.py --users 100 --bets 8 --runners 12 --crash-rate 0.3
+python3 scripts/stress_test.py --keep                           # conserva l'arena
+```
+
+Costruisce un bare repo, accredita N utenti, riempie una coda di issue e lancia
+R processi `drain` **davvero simultanei, senza la serializzazione di GitHub** —
+il caso peggiore. Dentro la coda ci sono consegne doppie, firme forgiate, utenti
+inesistenti, sforamenti di saldo e di limite, un evento chiuso, corpi
+illeggibili e il replay di un nonce vecchio. Durante la corsa i runner vengono
+uccisi con SIGKILL in punti casuali, anche fra il push e la chiusura delle
+issue. Alla fine piu' processi liquidano lo stesso evento insieme.
+
+Poi ricontrolla tutto da un clone pulito:
+
+* I1 catena, I2 saldi ricostruiti, I6 indice, I4 saldi mai negativi
+  (nemmeno **transitoriamente**, rigiocando il ledger entry per entry);
+* una sola `BET_DEBIT` per `bet_id`, nonce per utente strettamente crescente;
+* ogni bet valida applicata **esattamente una volta**, ogni bet ostile fermata
+  **dal controllo giusto** (verificare solo "rifiutata" nasconderebbe un
+  controllo che ne maschera un altro);
+* le ricevute non mentono: cio' che e' nel ledger risulta `APPLIED`, cio' che
+  non c'e' risulta `REJECTED`;
+* pool in cache == pool ricalcolati, un solo settlement per evento;
+* **conservazione globale**: `Σ accrediti == Σ (available + at_risk) + Σ incasso
+  della casa`;
+* la coda si e' svuotata: le issue sono tutte chiuse.
+
+Misura tipica (100 utenti, 800 bet, 12 runner, 30% di crash): ~176 run di drain,
+~52 crash, ~77 conflitti di push, zero violazioni.
+
+### Il test ha i denti
+
+Un test verde che non puo' fallire non dimostra niente. Disattivando a turno una
+difesa, lo stress test la becca:
+
+| Mutazione | Cosa succede |
+|---|---|
+| `git push --force` | il settlement di un run viene sovrascritto: record perso |
+| idempotenza I6 spenta | consegne doppie riscrivono le ricevute: bet applicate riportate `REJECTED` |
+| controllo saldo I4 spento | `available` va sotto zero, anche transitoriamente |
+| nonce I5 spento | il replay del nonce vecchio entra nel ledger |
+
+Nota onesta: I5 e I6 si coprono quasi del tutto a vicenda, perche' `bet_id` e'
+`<user_id>-<nonce>`. L'unico caso in cui serve davvero I5 e' il replay di una
+bet **rifiutata in precedenza** (quindi assente dall'indice di idempotenza) con
+un nonce ormai superato — ed e' esattamente il caso che la coda ostile include.
 
 ---
 
@@ -132,6 +240,15 @@ python3 arena.py receipt u_ab12ef34-7   # ricontrolla dopo
 
 Il segreto non lascia mai il telefono: viaggia solo l'HMAC. Il saldo locale non
 e' mai la verita': comanda `balances.json`.
+
+**Il nonce viene "bruciato" prima dell'invio, di proposito.** Il client salva
+`nonce.json` *prima* di chiamare GitHub: se la rete cade subito dopo, quel nonce
+resta consumato anche se la bet non e' mai arrivata, e la prossima partira' da
+N+1. E' un fastidio, non una perdita: nessun soldo si muove. L'alternativa —
+riusare il nonce dopo un errore di rete — e' peggiore, perche' una richiesta
+"fallita" puo' essere arrivata lo stesso e si finirebbe per firmare due bet
+diverse con lo stesso nonce. Meglio un buco nella numerazione che un replay
+ambiguo.
 
 ### Scheletro di firma (se ti scrivi un client tuo)
 
