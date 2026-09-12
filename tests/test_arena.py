@@ -891,6 +891,18 @@ class TestClient(ArenaCase):
         self.assertNotIn("token", cfg)
         self.assertEqual(cfg["user_id"], "u_ab12ef34")
 
+    def test_arena_py_senza_argomenti_mostra_la_situazione(self):
+        """Sul telefono e' la prima cosa che si digita: non deve dare errore."""
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena.py")],
+            capture_output=True, text=True, env=os.environ.copy(),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("u_ab12ef34", proc.stdout)
+        self.assertIn("available: 5000", proc.stdout)
+        self.assertIn("ev1", proc.stdout)          # l'evento aperto c'e'
+        self.assertIn("Nessun token", proc.stdout)  # e dice cosa manca
+
     def test_multiplier_matches_the_server_formula(self):
         pool = {"yes": 300, "no": 700}
         self.assertAlmostEqual(client.multiplier(pool, "yes", 300),
