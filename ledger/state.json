@@ -1,7 +1,7 @@
 {
   "applied_bets": {},
-  "current_shard": "2026-09.ndjson",
-  "head_hash": "38c5b801107a46b878e4443aa65917dff4c30b703c862a21a2e29c8feb61651d",
-  "last_seq": 2,
+  "current_shard": null,
+  "head_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "last_seq": 0,
   "version": 1
 }
