@@ -172,13 +172,24 @@ def cartella_moduli() -> Path:
     return qui
 
 
-def importa_moduli():
+def importa_moduli(cfg=None):
+    """Carica il motore contabile, scaricandolo se manca.
+
+    Se un setup si e' interrotto a meta' (config scritto, moduli no) la console
+    sa gia' da dove prenderli: mandare l'utente a rilanciare un comando che
+    trovera' il config e si fermera' e' il modo migliore per incastrarlo.
+    """
     qui = cartella_moduli()
     mancanti = [m for m in MODULI if not (qui / m).exists()]
+    if mancanti and cfg:
+        print(f"mancano {len(mancanti)} moduli del progetto: li scarico ora")
+        scarica_moduli(cfg)
+        qui = cartella_moduli()
+        mancanti = [m for m in MODULI if not (qui / m).exists()]
     if mancanti:
         raise SystemExit(
             "mancano i moduli del progetto: " + ", ".join(mancanti) +
-            "\nScaricali con:  python3 arena_admin.py setup"
+            "\nScaricali con:  python3 arena_admin.py setup --force"
         )
     sys.path.insert(0, str(qui))
     import common
@@ -530,10 +541,43 @@ def sembra_un_token(valore: str) -> bool:
     return len(valore) >= 36 and all(ch.isalnum() or ch in "_-" for ch in valore)
 
 
+def scarica_moduli(cfg, obbligatorio: bool = True):
+    """Porta accanto alla console il motore contabile del progetto.
+
+    Al primo setup e' obbligatorio: senza quei moduli la console non sa fare i
+    conti. Quando invece si sta solo rinfrescando un'installazione che c'e'
+    gia', un errore di rete non deve rendere inutilizzabile il pannello: si
+    avvisa e si tengono i moduli gia' presenti.
+    """
+    qui = Path(__file__).resolve().parent
+    print("scarico i moduli del progetto (il motore contabile, non una copia):")
+    for modulo in MODULI:
+        try:
+            scarica_file(cfg, f"scripts/{modulo}", qui / modulo)
+            print(f"  {modulo}")
+        except SystemExit as exc:
+            if obbligatorio:
+                raise
+            presente = "(tengo quello gia' presente)" if (qui / modulo).exists() \
+                else "(MANCA: la console non funzionera')"
+            print(f"  {modulo}: aggiornamento fallito {presente}")
+            print(f"    {exc}")
+
+
 def azione_setup(args):
     percorso = config_path()
     if percorso.exists() and not args.force:
-        raise SystemExit(f"{percorso} esiste gia' (usa --force)")
+        # Rilanciare `setup` dopo un aggiornamento e' il caso piu' comune:
+        # rifiutarsi di fare qualunque cosa, e lasciare i moduli vecchi, e'
+        # il comportamento sbagliato. Si tiene il config e si rinfresca.
+        cfg = carica_config()
+        print(f"config gia' presente in {percorso}: lo tengo "
+              f"(--force per rifarlo)")
+        print(f"  repo: {cfg['repo']}  branch: {cfg['branch']}  "
+              f"token: {'si' if cfg.get('token') else 'no (sola lettura)'}")
+        scarica_moduli(cfg, obbligatorio=False)
+        print("\nPronto: python3 arena_admin.py")
+        return 0
     repo = args.repo or chiedi("repo (owner/nome)")
     branch = args.branch or "main"
     token = args.token if args.token is not None else chiedi(
@@ -559,12 +603,24 @@ def azione_setup(args):
     else:
         print("  Senza token: sola lettura. Le scritture chiederanno un token.")
 
-    qui = Path(__file__).resolve().parent
-    print("scarico i moduli del progetto (il motore contabile, non una copia):")
-    for modulo in MODULI:
-        scarica_file(cfg, f"scripts/{modulo}", qui / modulo)
-        print(f"  {modulo}")
+    scarica_moduli(cfg)
     print("\nPronto: python3 arena_admin.py")
+    return 0
+
+
+def azione_aggiorna(cfg):
+    """Riscarica console e moduli.
+
+    Passa dall'API dei contenuti, non da `raw.githubusercontent.com`: quello
+    sta dietro una CDN che serve il file vecchio fino a qualche minuto dopo un
+    merge, e su un telefono e' difficile accorgersene.
+    """
+    qui = Path(__file__).resolve().parent
+    mio_nome = Path(__file__).name
+    scarica_file(cfg, "client/arena_admin.py", qui / mio_nome)
+    print(f"aggiornata {mio_nome}")
+    scarica_moduli(cfg)
+    print("\nRilancia: python3 arena_admin.py")
     return 0
 
 
@@ -654,8 +710,8 @@ def vista_contabilita(cache: Path, comune):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Console amministrativa dell'Arena")
     ap.add_argument("comando", nargs="?", default="menu",
-                    choices=["menu", "setup", "dashboard", "eventi", "utenti",
-                             "utente", "conti", "ledger", "settlement",
+                    choices=["menu", "setup", "aggiorna", "dashboard", "eventi",
+                             "utenti", "utente", "conti", "ledger", "settlement",
                              "verifica", "anteprima"])
     ap.add_argument("argomento", nargs="?", help="user_id o event_id")
     ap.add_argument("esito", nargs="?", help="per anteprima: yes/no/void")
@@ -670,7 +726,9 @@ def main(argv=None) -> int:
         return azione_setup(args)
 
     cfg = carica_config()
-    comune, liquida, verifica_stato = importa_moduli()
+    if args.comando == "aggiorna":
+        return azione_aggiorna(cfg)
+    comune, liquida, verifica_stato = importa_moduli(cfg)
     cache = cache_dir() if args.offline else aggiorna_stato(cfg, silenzioso=True)
     if not (cache / "ledger").exists():
         raise SystemExit("cache assente: lancia senza --offline")

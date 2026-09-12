@@ -1224,6 +1224,59 @@ class TestConsoleAdmin(unittest.TestCase):
         proc = self.esegui("anteprima", "ev_prova", "void")
         self.assertIn("RIMBORSO TOTALE", proc.stdout)
 
+    def test_setup_rilanciato_tiene_il_config(self):
+        """Il caso comune: rilanciare setup dopo un aggiornamento.
+
+        Rifiutarsi di fare qualunque cosa, lasciando i moduli vecchi, era il
+        comportamento sbagliato: e' successo al primo uso vero.
+        """
+        prima = (self.tmp / "admin.json").read_text(encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena_admin.py"), "setup"],
+            capture_output=True, text=True, env=os.environ.copy(), timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("lo tengo", proc.stdout)
+        self.assertEqual((self.tmp / "admin.json").read_text(encoding="utf-8"), prima)
+
+    def test_si_riscarica_i_moduli_se_mancano(self):
+        """Il setup interrotto a meta': config scritto, moduli no.
+
+        Mandare l'utente a rilanciare un comando che trovera' il config e si
+        fermera' e' il modo migliore per incastrarlo — e' successo davvero.
+        """
+        vuota = self.tmp / "console"
+        vuota.mkdir()
+        shutil.copy(REPO / "client" / "arena_admin.py", vuota)
+        sys.path.insert(0, str(vuota))
+        scaricati = []
+
+        def finto_download(cfg, percorso_repo, destinazione):
+            scaricati.append(percorso_repo)
+            shutil.copy(REPO / percorso_repo, destinazione)
+
+        with unittest.mock.patch.object(self.admin, "scarica_file", finto_download), \
+             unittest.mock.patch.object(self.admin, "__file__", str(vuota / "arena_admin.py")):
+            with unittest.mock.patch.object(
+                    self.admin.Path, "cwd", staticmethod(lambda: vuota)):
+                moduli = self.admin.importa_moduli({"repo": "owner/arena",
+                                                    "branch": "main"})
+        self.assertEqual(len(moduli), 3)
+        self.assertEqual(len(scaricati), 4, "deve scaricare i quattro moduli")
+
+    def test_senza_config_dice_di_usare_force(self):
+        """Se non puo' ripararsi, il consiglio dev'essere quello che funziona."""
+        vuota = self.tmp / "console2"
+        vuota.mkdir()
+        shutil.copy(REPO / "client" / "arena_admin.py", vuota)
+        with unittest.mock.patch.object(self.admin, "__file__",
+                                        str(vuota / "arena_admin.py")):
+            with unittest.mock.patch.object(
+                    self.admin.Path, "cwd", staticmethod(lambda: vuota)):
+                with self.assertRaises(SystemExit) as ctx:
+                    self.admin.importa_moduli(None)
+        self.assertIn("--force", str(ctx.exception))
+
     def test_le_viste_non_esplodono(self):
         for comando in ("eventi", "utenti", "conti", "ledger", "settlement"):
             proc = self.esegui(comando)
