@@ -794,6 +794,45 @@ class TestClient(ArenaCase):
         )
         self.assertIn("available:  5000", proc.stdout)
 
+    def test_init_scrive_un_config_valido(self):
+        nuovo = self.tmp / "nuovo" / "config.json"
+        os.environ["ARENA_CONFIG"] = str(nuovo)
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena.py"), "init",
+             "--user-id", "u_ab12ef34", "--secret", "a" * 64,
+             "--repo", "owner/arena", "--token", ""],
+            capture_output=True, text=True, env=os.environ.copy(),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        cfg = json.loads(nuovo.read_text(encoding="utf-8"))
+        self.assertEqual(cfg["user_id"], "u_ab12ef34")
+        self.assertEqual(cfg["repo"], "owner/arena")
+        self.assertNotIn("token", cfg, "un token vuoto non va salvato")
+        self.assertEqual(oct(nuovo.stat().st_mode)[-3:], "600")
+
+    def test_init_rifiuta_un_secret_malformato(self):
+        nuovo = self.tmp / "nuovo2" / "config.json"
+        os.environ["ARENA_CONFIG"] = str(nuovo)
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena.py"), "init",
+             "--user-id", "u_ab12ef34", "--secret", "non-esadecimale",
+             "--repo", "owner/arena", "--token", ""],
+            capture_output=True, text=True, env=os.environ.copy(),
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertFalse(nuovo.exists(), "un config invalido non va scritto")
+
+    def test_init_non_sovrascrive_senza_force(self):
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "client" / "arena.py"), "init",
+             "--user-id", "u_ab12ef34", "--secret", "b" * 64,
+             "--repo", "owner/arena", "--token", ""],
+            capture_output=True, text=True, env=os.environ.copy(),
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        # il config di setUp e' intatto
+        self.assertEqual(json.loads(self.cfg_path.read_text())["secret"], self.secret)
+
     def test_multiplier_matches_the_server_formula(self):
         pool = {"yes": 300, "no": 700}
         self.assertAlmostEqual(client.multiplier(pool, "yes", 300),
