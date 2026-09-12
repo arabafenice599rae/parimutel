@@ -686,6 +686,48 @@ def scarica_moduli(cfg, obbligatorio: bool = True):
             print(f"    {exc}")
 
 
+def azione_token(cfg):
+    """Dice se il token c'e' e cosa sa fare davvero.
+
+    Un dispatch che fallisce dentro il menu scorre via in un messaggio fra due
+    disegni di menu; qui la risposta e' una sola e sta tutta sullo schermo.
+    """
+    riga("TOKEN", 52)
+    if not cfg.get("token"):
+        print("  Nessun token nel config: sola lettura.")
+        print("  Aggiungilo con: python3 arena_admin.py setup --force")
+        return 1
+    print(f"  presente: {cfg['token'][:12]}…  ({len(cfg['token'])} caratteri)")
+
+    # 1. lettura del repo (Metadata / Contents)
+    try:
+        info = richiesta(cfg, "GET", f"/repos/{cfg['repo']}")
+        print(f"  lettura repo    OK   ({info['full_name']}, "
+              f"{'privato' if info['private'] else 'pubblico'})")
+    except SystemExit as exc:
+        print(f"  lettura repo    NO   {exc}")
+        return 1
+
+    # 2. il permesso che serve davvero: lanciare un workflow.
+    # Si prova su ci.yml, che non tocca il denaro: esegue solo i test.
+    try:
+        richiesta(cfg, "POST",
+                  f"/repos/{cfg['repo']}/actions/workflows/ci.yml/dispatches",
+                  {"ref": cfg["branch"]})
+        print("  dispatch        OK   (ho lanciato un run di ci per provare)")
+        print("\n  Il token puo' creare eventi, accreditare e liquidare.")
+        return 0
+    except SystemExit as exc:
+        print(f"  dispatch        NO")
+        for linea in str(exc).splitlines():
+            print(f"    {linea}")
+        print("\n  Serve 'Actions: Read and write' su questo repo.")
+        print("  Attenzione: un token fine-grained va anche AUTORIZZATO se")
+        print("  l'organizzazione lo richiede, e i permessi non si possono")
+        print("  cambiare dopo: in quel caso se ne crea uno nuovo.")
+        return 1
+
+
 def azione_setup(args):
     percorso = config_path()
     if percorso.exists() and not args.force:
@@ -770,7 +812,8 @@ MENU = """
 ║ 11  Chiudi evento                    ║
 ║ 12  Risolvi evento                   ║
 ╠══════════════════════════════════════╣
-║  a  Aggiorna dati    0  Esci         ║
+║  a  Aggiorna dati    t  Prova token  ║
+║  0  Esci                             ║
 ╚══════════════════════════════════════╝"""
 
 
@@ -783,6 +826,8 @@ def menu(cfg, cache, comune, liquida, verifica_stato):
                 return 0
             elif scelta == "a":
                 cache = aggiorna_stato(cfg)
+            elif scelta == "t":
+                azione_token(cfg)
             elif scelta == "1":
                 vista_dashboard(cache, comune)
             elif scelta == "2":
@@ -841,7 +886,7 @@ def vista_contabilita(cache: Path, comune):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Console amministrativa dell'Arena")
     ap.add_argument("comando", nargs="?", default="menu",
-                    choices=["menu", "setup", "aggiorna", "dashboard", "eventi",
+                    choices=["menu", "setup", "aggiorna", "token", "dashboard", "eventi",
                              "utenti", "utente", "conti", "ledger", "settlement",
                              "verifica", "anteprima"])
     ap.add_argument("argomento", nargs="?", help="user_id o event_id")
@@ -859,6 +904,8 @@ def main(argv=None) -> int:
     cfg = carica_config()
     if args.comando == "aggiorna":
         return azione_aggiorna(cfg)
+    if args.comando == "token":
+        return azione_token(cfg)
     comune, liquida, verifica_stato = importa_moduli(cfg)
     cache = cache_dir() if args.offline else aggiorna_stato(cfg, silenzioso=True)
     if not (cache / "ledger").exists():
