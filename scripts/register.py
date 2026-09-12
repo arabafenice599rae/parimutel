@@ -85,7 +85,7 @@ def main(argv=None) -> int:
         c.eprint(f"avviso: magazzino segreti non leggibile ({exc})")
 
     taken = set(secrets_map) | set(ws.balances)
-    user_id = args.user_id or new_user_id(taken)
+    user_id = c.clean_id(args.user_id) or new_user_id(taken)
     if user_id in taken:
         c.eprint(f"errore: {user_id} esiste gia'")
         return 1

@@ -3,14 +3,35 @@ name: create_event
 on:
   workflow_dispatch:
     inputs:
-      event_id: { description: "id dell'evento", required: true }
-      title:    { description: "titolo", required: true }
-      close_at: { description: "chiusura ISO-8601 UTC (2026-09-20T18:00:00Z)", required: true }
-      yes_label: { description: "etichetta lato yes", required: false, default: "Yes" }
-      no_label:  { description: "etichetta lato no",  required: false, default: "No" }
-      takeout_bps: { description: "spread implicito in bps", required: false, default: "300" }
-      min_bet: { description: "puntata minima", required: false, default: "100" }
-      max_bet: { description: "puntata massima", required: false, default: "1000000" }
+      event_id:
+        description: "id dell'evento, senza spazi (es. ev_derby)"
+        required: true
+      title:
+        description: "Titolo mostrato agli utenti"
+        required: true
+      close_at:
+        description: "Chiusura in UTC, formato 2026-09-20T18:00:00Z"
+        required: true
+      yes_label:
+        description: "Etichetta del lato YES (es. Roma)"
+        required: false
+        default: "Yes"
+      no_label:
+        description: "Etichetta del lato NO (es. Lazio)"
+        required: false
+        default: "No"
+      takeout_bps:
+        description: "Spread implicito in basis point (300 = 3%)"
+        required: false
+        default: "300"
+      min_bet:
+        description: "Puntata minima in punti"
+        required: false
+        default: "100"
+      max_bet:
+        description: "Puntata massima in punti"
+        required: false
+        default: "1000000"
 
 concurrency:
   group: ledger-write
@@ -22,17 +43,30 @@ permissions:
 jobs:
   create:
     runs-on: ubuntu-latest
+    env:
+      IN_EVENT: ${{ github.event.inputs.event_id }}
+      IN_TITLE: ${{ github.event.inputs.title }}
+      IN_CLOSE_AT: ${{ github.event.inputs.close_at }}
+      IN_YES: ${{ github.event.inputs.yes_label }}
+      IN_NO: ${{ github.event.inputs.no_label }}
+      IN_TAKEOUT: ${{ github.event.inputs.takeout_bps }}
+      IN_MIN: ${{ github.event.inputs.min_bet }}
+      IN_MAX: ${{ github.event.inputs.max_bet }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Apri l'evento
         run: |
+          set -euo pipefail
+          trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+
           python3 scripts/create_event.py \
-            --id "${{ github.event.inputs.event_id }}" \
-            --title "${{ github.event.inputs.title }}" \
-            --close-at "${{ github.event.inputs.close_at }}" \
-            --yes "${{ github.event.inputs.yes_label }}" \
-            --no "${{ github.event.inputs.no_label }}" \
-            --takeout-bps "${{ github.event.inputs.takeout_bps }}" \
-            --min-bet "${{ github.event.inputs.min_bet }}" \
-            --max-bet "${{ github.event.inputs.max_bet }}" \
+            --id "$(trim "$IN_EVENT")" \
+            --title "$IN_TITLE" \
+            --close-at "$(trim "$IN_CLOSE_AT")" \
+            --yes "$IN_YES" \
+            --no "$IN_NO" \
+            --takeout-bps "$(trim "$IN_TAKEOUT")" \
+            --min-bet "$(trim "$IN_MIN")" \
+            --max-bet "$(trim "$IN_MAX")" \
             --commit

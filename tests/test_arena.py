@@ -827,5 +827,83 @@ class TestConcurrency(unittest.TestCase):
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+# ==========================================================================
+class TestHumanTypedInput(ArenaCase):
+    """Gli identificatori digitati a mano arrivano sporchi (§test reale).
+
+    Da telefono la tastiera aggiunge uno spazio in fondo con facilita': e'
+    successo davvero, su un settle reale, ed e' costato un run rosso.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.add_user("u_a")
+        self.credit("u_a", 5000)
+        self.make_event("ev1", close_in=-1)
+
+    def test_settle_tollera_spazi_nell_event_id(self):
+        self.run_script("settle.py", "--event", " ev1 ", "--outcome", "yes")
+        self.assertIn("ev1", self.settlements())
+        self.assert_healthy()
+
+    def test_credit_tollera_spazi_nello_user_id(self):
+        self.credit(" u_a ", 100)
+        # niente riga fantasma con lo spazio dentro
+        self.assertEqual(sorted(self.balances()), ["u_a"])
+        self.assertEqual(self.balances()["u_a"]["available"], 5100)
+        self.assert_healthy()
+
+    def test_create_event_tollera_spazi(self):
+        self.run_script("create_event.py", "--id", " ev_x ", "--title", "x",
+                        "--close-at", " " + iso(60) + " ")
+        self.assertIn("ev_x", self.events())
+
+    def test_il_payload_firmato_NON_viene_normalizzato(self):
+        """La linea da non superare: l'HMAC copre la stringa esatta.
+
+        Normalizzare dopo la verifica vorrebbe dire applicare una bet diversa
+        da quella che l'utente ha firmato.
+        """
+        self.make_event("ev2")
+        bet = self.make_bet("u_a", "ev2 ", "yes", 100, 1)   # firmata con lo spazio
+        ws = c.WorkingState()
+        res = c.validate_and_apply(bet, ws, c.load_user_secrets())
+        self.assertEqual(res.code, c.ERR_EVENT_MISSING)
+        self.assertEqual(ws.events["ev2"]["pool"], {"yes": 0, "no": 0})
+
+
+class TestWorkflowInputs(unittest.TestCase):
+    """I toggle dei workflow devono reggere sia "true" sia il booleano JSON.
+
+    `github.event.inputs.x == 'true'` e' SEMPRE falso quando il client manda un
+    booleano vero: GitHub converte i tipi a numero (true -> 1, 'true' -> NaN).
+    L'app mobile manda booleani, quindi `dry_run` acceso liquidava davvero.
+    """
+
+    def workflows(self):
+        return sorted((REPO / ".github" / "workflows").glob("*.yml"))
+
+    def test_nessun_confronto_fragile_sui_booleani(self):
+        offenders = []
+        for path in self.workflows():
+            for lineno, line in enumerate(path.read_text().splitlines(), 1):
+                if "${{" in line and "== 'true'" in line:
+                    offenders.append(f"{path.name}:{lineno}: {line.strip()}")
+        self.assertEqual(offenders, [], "confronto fragile su input booleano")
+
+    def test_i_toggle_passano_da_variabili_d_ambiente(self):
+        settle = (REPO / ".github/workflows/settle.yml").read_text()
+        self.assertIn('IN_DRY_RUN: ${{ github.event.inputs.dry_run }}', settle)
+        # fail-safe: si liquida solo se l'anteprima e' esplicitamente spenta
+        self.assertIn('if [ "$IN_DRY_RUN" != "false" ]; then', settle)
+        self.assertIn("--dry-run", settle)
+
+    def test_nessun_workflow_maschera_gli_errori(self):
+        for path in self.workflows():
+            text = path.read_text()
+            self.assertNotIn("|| true", text.replace("`|| true`", ""),
+                             f"{path.name} maschera gli errori")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

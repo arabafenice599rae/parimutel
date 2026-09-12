@@ -35,7 +35,11 @@ def main(argv=None) -> int:
         c.eprint("errore: amount 0 non ha effetto")
         return 2
 
-    credit_id = args.credit_id or "cr_" + pysecrets.token_hex(8)
+    user_id = c.clean_id(args.user)
+    if not user_id:
+        c.eprint("errore: --user vuoto")
+        return c.EXIT_USAGE
+    credit_id = c.clean_id(args.credit_id) or "cr_" + pysecrets.token_hex(8)
     ws = c.WorkingState()
 
     # Idempotenza: un id gia' presente nel ledger e' un no-op (I6 vale anche qui).
@@ -43,7 +47,7 @@ def main(argv=None) -> int:
         print(f"DUP {credit_id}: accredito gia' presente nel ledger, no-op")
         return 0
 
-    row = ws.balance(args.user)
+    row = ws.balance(user_id)
     if args.amount < 0 and not args.allow_negative:
         if row["available"] + args.amount < 0:
             c.eprint(
@@ -56,7 +60,7 @@ def main(argv=None) -> int:
     entry = ws.append_entry(
         c.KIND_CREDIT,
         entry_id=credit_id,
-        user_id=args.user,
+        user_id=user_id,
         amount=args.amount,
         meta=meta,
     )
@@ -66,13 +70,13 @@ def main(argv=None) -> int:
 
     paths = ws.flush()
     print(
-        f"CREDIT {credit_id}: {args.user} {args.amount:+d} -> available="
+        f"CREDIT {credit_id}: {user_id} {args.amount:+d} -> available="
         f"{row['available']} (seq={entry['seq']})"
     )
 
     if args.commit:
         return c.commit_and_push_cli(
-            paths, f"credit {args.user} {args.amount:+d} ({credit_id})",
+            paths, f"credit {user_id} {args.amount:+d} ({credit_id})",
             push=not args.no_push,
         )
     return c.EXIT_OK

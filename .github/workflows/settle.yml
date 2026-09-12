@@ -4,20 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       event_id:
-        description: "event_id da liquidare"
+        description: "event_id da liquidare (es. ev_derby)"
         required: true
       outcome:
-        description: "yes | no | void"
+        description: "esito: yes = vince YES, no = vince NO, void = rimborso totale"
         required: true
         type: choice
         options: ["yes", "no", "void"]
       force:
-        description: "liquida anche prima di close_at"
+        description: "Forza: liquida anche se l'evento non ha ancora chiuso"
         required: false
         type: boolean
         default: false
       dry_run:
-        description: "calcola e stampa senza scrivere"
+        description: "Anteprima: stampa i numeri e NON liquida"
         required: false
         type: boolean
         default: false
@@ -32,16 +32,42 @@ permissions:
 jobs:
   settle:
     runs-on: ubuntu-latest
+    env:
+      IN_EVENT: ${{ github.event.inputs.event_id }}
+      IN_OUTCOME: ${{ github.event.inputs.outcome }}
+      IN_FORCE: ${{ github.event.inputs.force }}
+      IN_DRY_RUN: ${{ github.event.inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Liquida l'evento
+        # Gli argomenti si costruiscono in bash, non dentro ${{ }}: un input
+        # booleano puo' arrivare come stringa "true" o come booleano JSON, e
+        # nel secondo caso `== 'true'` e' SEMPRE falso (GitHub converte i tipi
+        # a numero: true -> 1, 'true' -> NaN). Qui entrambi rendono "true".
         run: |
-          python3 scripts/settle.py \
-            --event "${{ github.event.inputs.event_id }}" \
-            --outcome "${{ github.event.inputs.outcome }}" \
-            ${{ github.event.inputs.force == 'true' && '--force' || '' }} \
-            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '--commit' }}
+          set -euo pipefail
+          trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+
+          event="$(trim "$IN_EVENT")"
+          outcome="$(trim "$IN_OUTCOME")"
+          args=(--event "$event" --outcome "$outcome")
+
+          if [ "$IN_FORCE" = "true" ]; then
+            args+=(--force)
+          fi
+          # Fail-safe: si liquida solo se l'anteprima e' esplicitamente spenta.
+          # Qualunque valore inatteso vale come "anteprima", perche' il verso
+          # pericoloso dell'errore e' liquidare quando non era richiesto.
+          if [ "$IN_DRY_RUN" != "false" ]; then
+            args+=(--dry-run)
+            echo "::notice::anteprima (dry_run=$IN_DRY_RUN): nessuna scrittura"
+          else
+            args+=(--commit)
+          fi
+
+          echo "settle.py ${args[*]}"
+          python3 scripts/settle.py "${args[@]}"
 
       - name: Verifica le invarianti dopo il settlement
         run: python3 scripts/rebuild_balances.py
