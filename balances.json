@@ -1,20 +1,20 @@
 {
-  "as_of_seq": 4,
+  "as_of_seq": 6,
   "balances": {
     "u_03b325ba": {
-      "at_risk": 3000,
+      "at_risk": 0,
       "available": 7000,
       "last_nonce": 1,
       "lifetime_credited": 10000
     },
     "u_1b676e26": {
-      "at_risk": 2000,
-      "available": 8000,
+      "at_risk": 0,
+      "available": 12850,
       "last_nonce": 1,
       "lifetime_credited": 10000
     }
   },
-  "head_hash": "f4f816658d368d360155058a22581930379fe704f04741231c75d98b6001ef3b",
-  "updated_at": "2026-09-12T17:40:01Z",
+  "head_hash": "5aaf1f8131b978eac6c521a662181df381730f98a666f69610af550a20fd2b8f",
+  "updated_at": "2026-09-12T17:53:15Z",
   "version": 1
 }

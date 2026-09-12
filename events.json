@@ -11,18 +11,18 @@
       "max_bet": 100000,
       "min_bet": 10,
       "open_at": "2026-09-12T17:36:38Z",
-      "outcome": null,
+      "outcome": "no",
       "pool": {
         "no": 2000,
         "yes": 3000
       },
-      "resolved_at": null,
-      "settled_at": null,
+      "resolved_at": "2026-09-12T17:53:15Z",
+      "settled_at": "2026-09-12T17:53:15Z",
       "side_labels": {
         "no": "No",
         "yes": "Si"
       },
-      "state": "OPEN",
+      "state": "SETTLED",
       "takeout_bps": 300,
       "title": "Prova end-to-end",
       "unit_scale": 1,
